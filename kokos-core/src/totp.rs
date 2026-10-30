@@ -30,23 +30,63 @@ fn decode_secret(s: &str) -> Result<Vec<u8>> {
         .ok_or_else(|| VaultError::TotpParse("secret is not valid base32".into()))
 }
 
+/// RFC 3986 percent-decoding of one query component (`+` is left as-is).
+/// A malformed escape or non-UTF-8 result is a parse error, not a guess.
+fn percent_decode(s: &str) -> Result<String> {
+    let bad = || VaultError::TotpParse("otpauth URI has an invalid percent-escape".into());
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3).ok_or_else(bad)?;
+            let hex = std::str::from_utf8(hex).map_err(|_| bad())?;
+            out.push(u8::from_str_radix(hex, 16).map_err(|_| bad())?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| bad())
+}
+
 pub fn parse(input: &str) -> Result<TotpParams> {
     let input = input.trim();
     if let Some(rest) = input.strip_prefix("otpauth://totp/") {
         let query = rest.split_once('?').map(|(_, q)| q).unwrap_or("");
         let mut secret = None;
+        // Only an absent parameter takes the default: a present-but-invalid
+        // one would yield codes the issuer never accepts.
         let (mut digits, mut period, mut algo) = (6u32, 30u32, TotpAlgo::Sha1);
         for pair in query.split('&') {
             let Some((k, v)) = pair.split_once('=') else { continue };
-            match k {
-                "secret" => secret = Some(decode_secret(v)?),
-                "digits" => digits = v.parse().unwrap_or(6),
-                "period" => period = v.parse().unwrap_or(30),
-                "algorithm" => algo = match v.to_uppercase().as_str() {
-                    "SHA256" => TotpAlgo::Sha256,
-                    "SHA512" => TotpAlgo::Sha512,
-                    _ => TotpAlgo::Sha1,
-                },
+            // Values of unknown keys (e.g. a free-text `issuer`) are never
+            // decoded, so a stray `%` there cannot fail the whole URI.
+            match percent_decode(k)?.as_str() {
+                "secret" => secret = Some(decode_secret(&Zeroizing::new(percent_decode(v)?))?),
+                "digits" => {
+                    digits = percent_decode(v)?
+                        .parse()
+                        .ok()
+                        .filter(|d| (6..=8).contains(d))
+                        .ok_or_else(|| VaultError::TotpParse("digits must be 6, 7 or 8".into()))?;
+                }
+                "period" => {
+                    period = percent_decode(v)?
+                        .parse()
+                        .ok()
+                        .filter(|p| (1..=3600).contains(p))
+                        .ok_or_else(|| VaultError::TotpParse("period must be 1..=3600 seconds".into()))?;
+                }
+                "algorithm" => {
+                    algo = match percent_decode(v)?.to_ascii_uppercase().replace('-', "").as_str() {
+                        "SHA1" => TotpAlgo::Sha1,
+                        "SHA256" => TotpAlgo::Sha256,
+                        "SHA512" => TotpAlgo::Sha512,
+                        _ => return Err(VaultError::TotpParse("unsupported algorithm".into())),
+                    };
+                }
                 _ => {}
             }
         }
@@ -142,6 +182,57 @@ mod tests {
         assert_eq!(p.period, 60);
         assert!(matches!(p.algo, TotpAlgo::Sha256));
         assert_eq!(p.secret.len(), 20);
+    }
+
+    #[test]
+    fn percent_encoded_query_is_decoded() {
+        let p = parse("otpauth://totp/ACME:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ%3D%3D&%64igits=8&algorithm=SHA%2D256").unwrap();
+        assert_eq!(p.secret.as_slice(), "12345678901234567890".as_bytes());
+        assert_eq!(p.digits, 8);
+        assert!(matches!(p.algo, TotpAlgo::Sha256));
+    }
+
+    #[test]
+    fn invalid_percent_escape_is_rejected() {
+        for uri in [
+            "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ%G1",
+            "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ%3",
+            "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQ%FF",
+        ] {
+            assert!(matches!(parse(uri), Err(crate::error::VaultError::TotpParse(_))), "{uri}");
+        }
+    }
+
+    #[test]
+    fn stray_percent_in_an_unknown_param_is_ignored() {
+        let p = parse("otpauth://totp/x?issuer=100%&secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ").unwrap();
+        assert_eq!(p.secret.len(), 20);
+    }
+
+    #[test]
+    fn present_but_invalid_params_are_rejected() {
+        let base = "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        for extra in [
+            "&digits=5", "&digits=9", "&digits=abc", "&digits=",
+            "&period=0", "&period=-30", "&period=3601", "&period=abc", "&period=",
+            "&algorithm=MD5", "&algorithm=",
+        ] {
+            let uri = format!("{base}{extra}");
+            assert!(matches!(parse(&uri), Err(crate::error::VaultError::TotpParse(_))), "{uri}");
+        }
+    }
+
+    #[test]
+    fn absent_params_default_and_algorithm_spellings_are_accepted() {
+        let base = "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        let p = parse(base).unwrap();
+        assert_eq!((p.digits, p.period), (6, 30));
+        assert!(matches!(p.algo, TotpAlgo::Sha1));
+        for (alg, want) in [("sha1", "Sha1"), ("SHA-1", "Sha1"), ("sha-256", "Sha256"), ("SHA512", "Sha512")] {
+            let p = parse(&format!("{base}&algorithm={alg}&digits=7&period=3600")).unwrap();
+            assert_eq!(format!("{:?}", p.algo), want, "{alg}");
+            assert_eq!((p.digits, p.period), (7, 3600));
+        }
     }
 
     #[test]
