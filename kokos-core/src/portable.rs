@@ -431,8 +431,9 @@ pub fn import(conn: &Connection, b: &ExportBundle, now: i64) -> Result<ImportRep
     for t in &b.data.tags {
         use rusqlite::OptionalExtension;
         // Favourites are restored from `is_favorite`; never map onto the
-        // reserved tag by name.
-        if t.name == crate::tags::FAVORITE_TAG {
+        // reserved tag by name. A blank name is not a tag: links to it drop.
+        let name = t.name.trim();
+        if name.is_empty() || name == crate::tags::FAVORITE_TAG {
             continue;
         }
         let existing: Option<String> = tx
@@ -1258,6 +1259,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fav_links, 0, "a non-favourite entry must not be favourited via a bundle tag");
+    }
+
+    #[test]
+    fn import_skips_padded_favorite_and_blank_tag_names() {
+        let dst = db::create_fresh().unwrap();
+        let tags = vec![
+            ExportTag { id: "t1".into(), name: " favorite ".into(), color: None },
+            ExportTag { id: "t2".into(), name: "  ".into(), color: None },
+            ExportTag { id: "t3".into(), name: "".into(), color: None },
+            ExportTag { id: "t4".into(), name: "work".into(), color: None },
+        ];
+        let e = bare_entry("A", vec!["t1".into(), "t2".into(), "t3".into(), "t4".into()]);
+        let rep = import(&dst, &bundle_of(vec![], tags, vec![e], vec![]), 2)
+            .expect("reserved or blank tag names must not abort the import");
+        assert_eq!(rep.tags_new, 1);
+        let names: Vec<String> = dst
+            .prepare("SELECT t.name FROM entry_tags et JOIN tags t ON t.id = et.tag_id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(names, vec!["work".to_string()]);
+        let blank: i64 = dst
+            .query_row("SELECT count(*) FROM tags WHERE trim(name) = ''", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blank, 0);
     }
 
     #[test]
