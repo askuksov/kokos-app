@@ -1,6 +1,9 @@
 //! On-demand perf/stress benches. All #[ignore] — run explicitly:
 //!   cargo test -p kokos-core --test perf_bench -- --ignored --nocapture
 //! Targets @20k: open 1–3s, search <100ms, CRUD <10ms/op, save 100–500ms.
+//! The targets are judged from the printed timings; the assertions are only
+//! regression ceilings, some with headroom over the target (broad search
+//! 250ms, save 1.5s) so a slow machine does not fail them spuriously.
 //! 50k is a stress run (measured + loose ceiling), not a target assertion.
 //! Vaults use FAST KDF so the numbers reflect DB scaling, not Argon2 (see the
 //! open-note below).
@@ -69,7 +72,7 @@ fn none() -> search::SearchFilters {
 
 #[test]
 #[ignore = "perf: run with --ignored"]
-fn search_20k_under_100ms() {
+fn search_20k_broad_and_narrow() {
     let conn = db::create_fresh().unwrap();
     generate(&conn, 20_000);
 
@@ -90,7 +93,7 @@ fn search_20k_under_100ms() {
 
 #[test]
 #[ignore = "perf: run with --ignored"]
-fn list_20k_under_100ms() {
+fn list_20k() {
     let conn = db::create_fresh().unwrap();
     generate(&conn, 20_000);
     let t = Instant::now();
@@ -103,7 +106,7 @@ fn list_20k_under_100ms() {
 
 #[test]
 #[ignore = "perf: run with --ignored"]
-fn crud_ops_under_10ms_on_20k_vault() {
+fn crud_ops_on_20k_vault() {
     let conn = db::create_fresh().unwrap();
     generate(&conn, 20_000);
     let now = db::now_unix();
@@ -158,7 +161,7 @@ fn crud_ops_under_10ms_on_20k_vault() {
 
 #[test]
 #[ignore = "perf: run with --ignored"]
-fn open_and_save_20k_within_target() {
+fn open_and_save_20k() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bench20k.kokos");
 
