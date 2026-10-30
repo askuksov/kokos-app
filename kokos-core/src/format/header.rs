@@ -100,6 +100,10 @@ impl Header {
             out.push(self.flags);
         }
         let hint = self.hint.as_bytes();
+        // New hints are capped at MAX_HINT_LEN, but a pre-cap vault re-saved
+        // as-is may carry a longer one; the hard limit is the u16 length field,
+        // which the cast below would silently wrap past.
+        debug_assert!(hint.len() <= u16::MAX as usize, "hint exceeds the u16 length field");
         out.extend_from_slice(&(hint.len() as u16).to_le_bytes());
         out.extend_from_slice(hint);
         out.extend_from_slice(&self.kdf.memory_kib.to_le_bytes());

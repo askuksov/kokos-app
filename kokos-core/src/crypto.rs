@@ -82,11 +82,15 @@ impl Argon2Params {
 
     /// Stricter than `validate()`: the create-time floor for NEW vaults. Keeps
     /// the outer Go-parity bounds AND enforces the OWASP Argon2id minimum, so a
-    /// raw create_vault IPC call cannot mint a sub-OWASP vault. NOT used by
-    /// `open` (which must read weaker legacy headers).
+    /// raw create_vault IPC call cannot mint a sub-OWASP vault. Also caps at
+    /// `within_open_budget()`, so `create` can never write a vault that `open`
+    /// would refuse. NOT used by `open` (which must read weaker legacy headers).
     pub fn validate_for_new(&self) -> Result<()> {
         self.validate()?;
         if self.memory_kib < CREATE_MIN_MEMORY_KIB || self.time_cost < CREATE_MIN_TIME_COST {
+            return Err(VaultError::InvalidKdfParams);
+        }
+        if !self.within_open_budget() {
             return Err(VaultError::InvalidKdfParams);
         }
         Ok(())
@@ -268,6 +272,19 @@ mod tests {
         assert!(!bomb.within_open_budget());
         assert!(!Argon2Params { memory_kib: 524_288, time_cost: 3, parallelism: 4 }.within_open_budget());
         assert!(!Argon2Params { memory_kib: 65_536, time_cost: 11, parallelism: 4 }.within_open_budget());
+    }
+
+    #[test]
+    fn validate_for_new_rejects_params_open_would_refuse() {
+        let bomb = Argon2Params { memory_kib: 1_048_576, time_cost: 100, parallelism: 1 };
+        assert!(bomb.validate().is_ok());
+        assert!(matches!(bomb.validate_for_new(), Err(VaultError::InvalidKdfParams)));
+        let over_memory = Argon2Params { memory_kib: OPEN_MAX_MEMORY_KIB + 1, time_cost: 2, parallelism: 1 };
+        assert!(matches!(over_memory.validate_for_new(), Err(VaultError::InvalidKdfParams)));
+        let over_time = Argon2Params { memory_kib: 19_456, time_cost: OPEN_MAX_TIME_COST + 1, parallelism: 1 };
+        assert!(matches!(over_time.validate_for_new(), Err(VaultError::InvalidKdfParams)));
+        let at_cap = Argon2Params { memory_kib: OPEN_MAX_MEMORY_KIB, time_cost: OPEN_MAX_TIME_COST, parallelism: 4 };
+        assert!(at_cap.validate_for_new().is_ok());
     }
 
 

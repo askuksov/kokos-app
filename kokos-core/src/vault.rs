@@ -18,6 +18,10 @@ pub struct OpenVault {
     pub path: PathBuf,
     pub key: Zeroizing<[u8; KEY_LEN]>,
     pub migrated: bool,
+    /// Whether this session already took the pre-migration `.bak`. Per
+    /// `OpenVault`, not per file: a stale `.bak` from an earlier session must
+    /// not stop a new migration cycle from taking a fresh one.
+    backup_taken: bool,
 }
 
 /// Hand-written rather than `#[derive(Debug)]`: `zeroize::Zeroizing<Z>` itself
@@ -36,6 +40,7 @@ impl std::fmt::Debug for OpenVault {
             .field("path", &self.path)
             .field("key", &"<redacted>")
             .field("migrated", &self.migrated)
+            .field("backup_taken", &self.backup_taken)
             .finish()
     }
 }
@@ -87,7 +92,7 @@ pub fn create(
 
     let conn = db::create_fresh()?;
     write_container(&conn, &header, &key, path)?;
-    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false })
+    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false, backup_taken: false })
 }
 
 /// Upper bound on a vault container accepted by `open`, checked BEFORE the
@@ -141,32 +146,30 @@ pub fn open(path: &Path, password: &[u8], keyfile: Option<&Path>) -> Result<Open
     let retention = crate::trash::trash_auto_delete_days(&conn);
     crate::trash::auto_delete_old(&conn, retention)?;
 
-    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated })
+    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated, backup_taken: false })
 }
 
 /// Saves in the container's current header version: a v1 file stays v1 until
-/// the user enables a key file, which keeps the Go version usable
-/// as a rollback.
+/// the user enables a key file. The header is always written with the
+/// `KOKOS` magic, so the Go version cannot read a re-saved file; the only
+/// rollback after a migration is the retained pre-migration `.bak`.
 ///
-/// `v.migrated` is true exactly once: from the moment `open()` migrates a
-/// legacy container in memory until the next successful `save()`. A `.bak`
-/// is required before "the first save after a schema migration" — this
-/// is the one and only place that moment is observable, since the file on
-/// disk is untouched by `migrate()` itself (it runs in memory at open time).
-/// Order matters: the backup must be taken before `write_container` touches
-/// the file, and `migrated` must only be cleared once that write actually
-/// succeeded — otherwise a failed write would falsely mark the vault as
-/// backed up, and a later retry would skip straight past the guard.
+/// `v.migrated` is true from the moment `open()` migrates a legacy container
+/// in memory until the next successful `save()`/`save_opened()` (or
+/// `change_password`). A `.bak` is required before "the first save after a
+/// schema migration" — this is the one and only place that moment is
+/// observable, since the file on disk is untouched by `migrate()` itself (it
+/// runs in memory at open time). Order matters: the backup must be taken
+/// before `write_container` touches the file, and `migrated` must only be
+/// cleared once that write actually succeeded — otherwise a failed write
+/// would falsely mark the vault as backed up.
 ///
-/// The backup call is further gated on the `.bak` not already existing.
-/// `write_container`'s atomic rename can land on disk even though `save()`
-/// goes on to return `Err` (e.g. the trailing directory `sync_all` failing
-/// right after a successful rename) — in that case `v.migrated` is never
-/// cleared, so the next `save()` (an autosave or a manual retry) would
-/// otherwise re-run `atomic::backup`, which copies unconditionally and would
-/// overwrite the good pre-migration `.bak` with the now-migrated file,
-/// destroying the rollback copy. Once a `.bak` exists it is treated
-/// as immutable for the rest of this migrated-save cycle.
+/// The backup is taken at most once per `OpenVault` (`backup_taken`). A
+/// failed write may still have landed on disk, so a retry in the same session
+/// must not re-run `atomic::backup`: it would overwrite the good
+/// pre-migration `.bak` with the already-migrated file. A `.bak` left over
+/// from an earlier session, though, is stale and gets replaced by this
+/// cycle's pre-migration copy.
 pub fn save(v: &mut OpenVault) -> Result<()> {
     v.conn.execute(
         "INSERT INTO metadata (key, value) VALUES ('last_modified', ?1)
@@ -175,12 +178,19 @@ pub fn save(v: &mut OpenVault) -> Result<()> {
     )?;
     let next_rev = crate::db::get_sync_revision(&v.conn)?.saturating_add(1);
     crate::db::set_sync_revision(&v.conn, next_rev)?;
-    if v.migrated && !atomic::backup_path(&v.path).exists() {
-        atomic::backup(&v.path)?;
-    }
+    backup_before_first_migrated_save(v)?;
     v.header.nonce = crypto::random_nonce();
     write_container(&v.conn, &v.header, &v.key, &v.path)?;
     v.migrated = false;
+    Ok(())
+}
+
+/// Takes the pre-migration `.bak` once per session; see `save`.
+fn backup_before_first_migrated_save(v: &mut OpenVault) -> Result<()> {
+    if v.migrated && !v.backup_taken {
+        atomic::backup(&v.path)?;
+        v.backup_taken = true;
+    }
     Ok(())
 }
 
@@ -237,6 +247,9 @@ pub fn change_password(
 
     v.header = new_header;
     v.key = new_key;
+    // The migrated DB is now on disk and its transient `.bak` is gone; a later
+    // save must not take a "pre-migration" backup of this file.
+    v.migrated = false;
     Ok(())
 }
 
@@ -295,9 +308,7 @@ pub fn verify_password(v: &OpenVault, password: &[u8], keyfile: Option<&Path>) -
 /// device win LWW or trigger an auto-push. Still rotates the nonce and takes
 /// the one-time pre-migration `.bak` if this open migrated the schema.
 pub fn save_opened(v: &mut OpenVault) -> Result<()> {
-    if v.migrated && !atomic::backup_path(&v.path).exists() {
-        atomic::backup(&v.path)?;
-    }
+    backup_before_first_migrated_save(v)?;
     v.header.nonce = crypto::random_nonce();
     write_container(&v.conn, &v.header, &v.key, &v.path)?;
     v.migrated = false;
@@ -328,6 +339,34 @@ mod tests {
         std::fs::write(&path, vec![0u8; 101]).unwrap();
         assert!(matches!(read_vault_capped(&path, 100), Err(VaultError::InvalidCredentialsOrCorrupt)));
         assert_eq!(read_vault_capped(&path, 101).unwrap().len(), 101);
+    }
+
+    /// A failed migrated save may still have renamed the new file into place;
+    /// the retry in the same session must keep the pre-migration `.bak`.
+    #[test]
+    fn migrated_save_retry_in_same_session_keeps_the_first_bak() {
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("v1_favorite.vault");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures").join("v1_favorite.vault");
+        std::fs::copy(&fixture, &p).unwrap();
+        let original_hash = Sha256::digest(std::fs::read(&p).unwrap());
+
+        let mut v = open(&p, b"fixture-password", None).unwrap();
+        assert!(v.migrated, "fixture must actually migrate for this test to mean anything");
+
+        // First attempt: backup taken, then the write lands but reports an error.
+        backup_before_first_migrated_save(&mut v).unwrap();
+        std::fs::write(&p, b"already-migrated bytes from the failed attempt").unwrap();
+        assert!(v.migrated);
+
+        save(&mut v).unwrap();
+        assert_eq!(
+            Sha256::digest(std::fs::read(atomic::backup_path(&p)).unwrap()),
+            original_hash,
+            "a same-session retry must not overwrite the pre-migration .bak"
+        );
     }
 
     #[test]
