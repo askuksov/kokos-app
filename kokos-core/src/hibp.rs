@@ -27,9 +27,13 @@ pub fn split(password: &str) -> (String, String) {
     (prefix.to_string(), suffix.to_string())
 }
 
-/// The request URL for a prefix. This is the ONLY thing that egresses.
-pub fn range_url(prefix: &str) -> String {
-    format!("{HIBP_RANGE_BASE}/{prefix}")
+/// The request URL for a prefix. This is the ONLY thing that egresses, so
+/// anything but exactly 5 ASCII hex chars (the k-anonymity prefix) is `None`.
+pub fn range_url(prefix: &str) -> Option<String> {
+    if prefix.len() != 5 || !prefix.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("{HIBP_RANGE_BASE}/{prefix}"))
 }
 
 /// Match a suffix against an HIBP range response body (`SUFFIX:COUNT` lines,
@@ -88,7 +92,7 @@ pub fn scan_queries(conn: &Connection) -> Result<Vec<HibpQuery>> {
          WHERE e.is_deleted = 0
            AND ef.field_type = 'secret'
            AND (ef.template_id IS NULL OR ef.template_id NOT IN ('tpl_pin', 'tpl_security_answer'))
-         ORDER BY e.title COLLATE NOCASE ASC, ef.sort_order ASC",
+         ORDER BY e.title COLLATE NOCASE ASC, e.id ASC, ef.sort_order ASC, ef.id ASC",
     )?;
 
     let rows = stmt.query_map([], |r| {
@@ -138,7 +142,7 @@ mod tests {
     #[test]
     fn range_url_carries_only_the_prefix() {
         let (prefix, suffix) = split("password");
-        let url = range_url(&prefix);
+        let url = range_url(&prefix).unwrap();
         assert!(url.ends_with("/5BAA6"), "url = {url}");
         assert!(
             !url.contains(&suffix),
@@ -148,6 +152,24 @@ mod tests {
             !url.to_uppercase().contains(&format!("{prefix}{suffix}")),
             "no full hash"
         );
+    }
+
+    #[test]
+    fn range_url_rejects_anything_but_a_5_hex_prefix() {
+        let (prefix, suffix) = split("password");
+        for bad in [
+            "",
+            "5BAA",
+            "5BAA61",
+            "5BAG6",
+            "5BAA/",
+            "../x",
+            "5BAÄ",
+        ] {
+            assert_eq!(range_url(bad), None, "{bad:?} must be refused");
+        }
+        assert_eq!(range_url(&format!("{prefix}{suffix}")), None, "full hash refused");
+        assert!(range_url("5baa6").is_some(), "lowercase hex is still a 5-char prefix");
     }
 
     #[test]
@@ -250,6 +272,17 @@ mod tests {
             "suffix must never appear in Debug: {dbg}"
         );
         assert!(dbg.contains("5BAA6"), "prefix (non-secret) may appear");
+    }
+
+    #[test]
+    fn scan_queries_breaks_title_ties_by_entry_id() {
+        let conn = db::create_fresh().unwrap();
+        seed_entry(&conn, "b", "Same", 0);
+        seed_secret(&conn, "pb", "b", "Password", Some("tpl_password"), "pw-b");
+        seed_entry(&conn, "a", "same", 0);
+        seed_secret(&conn, "pa", "a", "Password", Some("tpl_password"), "pw-a");
+        let ids: Vec<String> = scan_queries(&conn).unwrap().into_iter().map(|q| q.entry_id).collect();
+        assert_eq!(ids, vec!["a", "b"]);
     }
 
     #[test]
