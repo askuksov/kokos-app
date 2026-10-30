@@ -20,7 +20,7 @@ fn main() {
     let deleted: i64 = v.conn.query_row("SELECT COUNT(*) FROM entries WHERE is_deleted = 1", [], |r| r.get(0)).unwrap();
     let folders: i64 = v.conn.query_row("SELECT COUNT(*) FROM folders", [], |r| r.get(0)).unwrap();
     let tags: i64 = v.conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
-    let favs: i64 = v.conn.query_row("SELECT COUNT(*) FROM entries WHERE is_favorite = 1", [], |r| r.get(0)).unwrap();
+    let favs: i64 = v.conn.query_row("SELECT COUNT(*) FROM entries WHERE is_favorite = 1 AND is_deleted = 0", [], |r| r.get(0)).unwrap();
 
     println!("format version : {}", v.header.version);
     println!("schema migrated: {}", v.migrated);
