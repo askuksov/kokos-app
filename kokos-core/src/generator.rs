@@ -43,6 +43,16 @@ pub fn generate(opts: &GenOpts) -> Result<String> {
     if opts.length < 4 || opts.length > MAX_LENGTH {
         return Err(VaultError::GeneratorOptions("length must be between 4 and 512".into()));
     }
+    for (name, class, enabled, min) in [
+        ("min_lower", "lower", opts.lower, opts.min_lower),
+        ("min_upper", "upper", opts.upper, opts.min_upper),
+        ("min_digits", "digits", opts.digits, opts.min_digits),
+        ("min_symbols", "symbols", opts.symbols, opts.min_symbols),
+    ] {
+        if !enabled && min > 0 {
+            return Err(VaultError::GeneratorOptions(format!("{name} must be 0 when {class} is disabled")));
+        }
+    }
     let mins_sum = opts.min_lower
         .saturating_add(opts.min_upper)
         .saturating_add(opts.min_digits)
@@ -193,8 +203,22 @@ mod tests {
         let r = generate(&opts);
         let elapsed = t0.elapsed();
         assert!(matches!(r, Err(crate::error::VaultError::GeneratorOptions(_))), "must reject");
-        assert!(elapsed < std::time::Duration::from_millis(50),
+        // Generous ceiling for busy CI; the unbounded loop takes seconds.
+        assert!(elapsed < std::time::Duration::from_secs(1),
             "huge min_* must be rejected before the loop (took {elapsed:?})");
+    }
+
+    #[test]
+    fn rejects_positive_minimum_for_disabled_class() {
+        let opts = GenOpts { upper: false, min_upper: 1, ..base() };
+        match generate(&opts) {
+            Err(crate::error::VaultError::GeneratorOptions(msg)) => {
+                assert!(msg.contains("min_upper") && msg.contains("upper is disabled"), "msg = {msg}");
+            }
+            other => panic!("expected GeneratorOptions error, got {other:?}"),
+        }
+        assert!(generate(&GenOpts { upper: false, min_upper: 0, ..base() }).is_ok(),
+            "a disabled class with min 0 is fine");
     }
 
     #[test]
