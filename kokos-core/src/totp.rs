@@ -28,6 +28,11 @@ fn decode_secret(s: &str) -> Result<Zeroizing<Vec<u8>>> {
     // the seed text never reallocates and leaves an unwiped copy behind.
     let mut cleaned = Zeroizing::new(String::with_capacity(s.len() * 3));
     cleaned.extend(s.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '=').flat_map(char::to_uppercase));
+    // Reject a bad alphabet before decoding: on failure `base32::decode` drops
+    // its partly filled buffer without wiping it.
+    if !cleaned.bytes().all(|b| b.is_ascii_uppercase() || (b'2'..=b'7').contains(&b)) {
+        return Err(VaultError::TotpParse("secret is not valid base32".into()));
+    }
     base32::decode(base32::Alphabet::Rfc4648 { padding: false }, &cleaned)
         .map(Zeroizing::new)
         .filter(|b| !b.is_empty())
