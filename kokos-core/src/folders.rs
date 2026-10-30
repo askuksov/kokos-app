@@ -131,8 +131,13 @@ pub fn find_or_create(conn: &Connection, parent_id: Option<&str>, name: &str, no
     let existing: Option<String> = conn
         .query_row(
             // A Go-migrated top-level folder has parent_id NULL, not 'root'.
+            // The seeded root row itself also has a NULL parent, so skip it;
+            // an exact parent match wins over a legacy NULL-parent one.
             "SELECT id FROM folders
-              WHERE name = ?1 AND (parent_id = ?2 OR (?2 = 'root' AND parent_id IS NULL))",
+              WHERE name = ?1 AND id <> 'root'
+                AND (parent_id = ?2 OR (?2 = 'root' AND parent_id IS NULL))
+              ORDER BY (parent_id IS NULL) ASC, created_at ASC, id ASC
+              LIMIT 1",
             rusqlite::params![name, parent],
             |r| r.get(0),
         )
@@ -202,8 +207,9 @@ pub fn delete(conn: &Connection, id: &str, now: i64) -> Result<()> {
         })
         .optional()?
         .ok_or(VaultError::FolderNotFound)?;
-    // A Go-migrated top-level folder has parent_id NULL; its contents land in root.
-    let dest = parent.as_deref().unwrap_or("root");
+    // A Go-migrated top-level folder has parent_id NULL, and a corrupt one may
+    // point at itself; either way its contents land in root.
+    let dest = parent.as_deref().filter(|p| *p != id).unwrap_or("root");
     tx.execute(
         "UPDATE folders SET parent_id = ?1, updated_at = ?2 WHERE parent_id = ?3",
         rusqlite::params![dest, now, id],
@@ -599,6 +605,41 @@ mod tests {
             assert_eq!(n, 1, "[{label}] no duplicate sibling");
             let other = find_or_create(&conn, Some("go-imp"), "GoImported", 1).unwrap();
             assert_ne!(other.id, "go-imp", "[{label}] a non-root parent does not match NULL");
+        }
+    }
+
+    #[test]
+    fn find_or_create_skips_root_row_and_prefers_exact_parent() {
+        for (label, conn) in both_dbs() {
+            let f = find_or_create(&conn, Some("root"), "Root", 1).unwrap();
+            assert_ne!(f.id, "root", "[{label}] the seeded root row is never returned");
+            assert_eq!(f.parent_id.as_deref(), Some("root"), "[{label}] a new child of root is created");
+
+            seed_folder(&conn, "dup-legacy", "Dup", None);
+            seed_folder(&conn, "dup-exact", "Dup", Some("root"));
+            let d = find_or_create(&conn, Some("root"), "Dup", 1).unwrap();
+            assert_eq!(d.id, "dup-exact", "[{label}] exact parent match wins over a NULL-parent one");
+        }
+    }
+
+    #[test]
+    fn delete_self_parent_folder_moves_contents_to_root() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            seed_folder(&conn, "self-p", "SelfP", Some("self-p"));
+            seed_folder(&conn, "self-sub", "SelfSub", Some("self-p"));
+            seed_entry(&conn, "in-self-p", "In SelfP", 0);
+            conn.execute("UPDATE entries SET folder_id = 'self-p' WHERE id = 'in-self-p'", []).unwrap();
+
+            delete(&conn, "self-p", now).unwrap();
+
+            assert!(get_folder(&conn, "self-p").unwrap().is_none(), "[{label}] deleted folder is gone");
+            let folder: Option<String> = conn.query_row(
+                "SELECT folder_id FROM entries WHERE id = 'in-self-p'", [], |r| r.get(0)).unwrap();
+            assert_eq!(folder.as_deref(), Some("root"), "[{label}] entry lands in root");
+            let sub = get_folder(&conn, "self-sub").unwrap()
+                .unwrap_or_else(|| panic!("[{label}] subfolder survives"));
+            assert_eq!(sub.parent_id.as_deref(), Some("root"), "[{label}] subfolder lands in root");
         }
     }
 
