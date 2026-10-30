@@ -40,14 +40,33 @@ fn fav_tag_id(conn: &Connection) -> Result<Option<String>> {
         .optional()?)
 }
 
+/// `#RRGGBB`, hex digits in either case.
+pub(crate) fn is_valid_color(c: &str) -> bool {
+    c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
 fn validate_color(color: Option<&str>) -> Result<()> {
     if let Some(c) = color {
-        let ok = c.len() == 7
-            && c.starts_with('#')
-            && c[1..].chars().all(|ch| ch.is_ascii_hexdigit());
-        if !ok {
+        if !is_valid_color(c) {
             return Err(VaultError::InvalidColor);
         }
+    }
+    Ok(())
+}
+
+/// The reserved favorite name is taken. Exact match (after trim), like the
+/// `name != 'favorite'` filters elsewhere: other spellings are ordinary tags.
+fn reject_reserved_name(name: &str) -> Result<()> {
+    if name.trim() == FAVORITE_TAG {
+        return Err(VaultError::DuplicateTagName);
+    }
+    Ok(())
+}
+
+/// The reserved favorite tag is not addressable through user tag CRUD.
+fn reject_favorite_id(conn: &Connection, id: &str) -> Result<()> {
+    if fav_tag_id(conn)?.as_deref() == Some(id) {
+        return Err(VaultError::TagNotFound);
     }
     Ok(())
 }
@@ -76,6 +95,7 @@ pub fn ensure_favorite_tag(conn: &Connection) -> Result<String> {
 }
 
 pub fn create(conn: &Connection, name: &str, color: Option<&str>) -> Result<Tag> {
+    reject_reserved_name(name)?;
     validate_color(color)?;
     let id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -101,6 +121,8 @@ fn read_tag(conn: &Connection, id: &str) -> Result<Tag> {
 }
 
 pub fn rename(conn: &Connection, id: &str, name: &str) -> Result<Tag> {
+    reject_favorite_id(conn, id)?;
+    reject_reserved_name(name)?;
     let n = conn
         .execute("UPDATE tags SET name = ?1 WHERE id = ?2", rusqlite::params![name, id])
         .map_err(map_unique)?;
@@ -111,6 +133,7 @@ pub fn rename(conn: &Connection, id: &str, name: &str) -> Result<Tag> {
 }
 
 pub fn recolor(conn: &Connection, id: &str, color: Option<&str>) -> Result<Tag> {
+    reject_favorite_id(conn, id)?;
     validate_color(color)?;
     let n = conn.execute("UPDATE tags SET color = ?1 WHERE id = ?2", rusqlite::params![color, id])?;
     if n == 0 {
@@ -120,6 +143,7 @@ pub fn recolor(conn: &Connection, id: &str, color: Option<&str>) -> Result<Tag> 
 }
 
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
+    reject_favorite_id(conn, id)?;
     let n = conn.execute("DELETE FROM tags WHERE id = ?1", [id])?;
     if n == 0 {
         return Err(VaultError::TagNotFound);
@@ -146,7 +170,10 @@ pub fn set_entry_tags(conn: &Connection, entry_id: &str, tag_ids: &[String], now
             rusqlite::params![entry_id, tid],
         )?;
     }
-    let n = tx.execute("UPDATE entries SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, entry_id])?;
+    let n = tx.execute(
+        "UPDATE entries SET updated_at = ?1 WHERE id = ?2 AND is_deleted = 0",
+        rusqlite::params![now, entry_id],
+    )?;
     if n == 0 {
         return Err(VaultError::EntryNotFound);
     }
@@ -164,7 +191,10 @@ pub fn set_entry_tag(conn: &Connection, entry_id: &str, tag_id: &str, add: bool,
     } else {
         tx.execute("DELETE FROM entry_tags WHERE entry_id = ?1 AND tag_id = ?2", rusqlite::params![entry_id, tag_id])?;
     }
-    let n = tx.execute("UPDATE entries SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, entry_id])?;
+    let n = tx.execute(
+        "UPDATE entries SET updated_at = ?1 WHERE id = ?2 AND is_deleted = 0",
+        rusqlite::params![now, entry_id],
+    )?;
     if n == 0 { return Err(VaultError::EntryNotFound); }
     tx.commit()?;
     Ok(())
@@ -480,6 +510,62 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(count, 1, "[{label}] duplicate id in tag_ids yields exactly one link");
+        }
+    }
+
+    #[test]
+    fn create_and_rename_reject_reserved_favorite_name() {
+        for (label, conn) in both_dbs() {
+            for name in ["favorite", "  favorite "] {
+                assert!(matches!(create(&conn, name, None), Err(VaultError::DuplicateTagName)),
+                    "[{label}] create {name:?} rejected");
+            }
+            // Only the exact reserved name is taken; other spellings are ordinary tags.
+            assert!(create(&conn, "Favorite", None).is_ok(), "[{label}] create \"Favorite\" allowed");
+            let t = create(&conn, "Plain", None).unwrap();
+            assert!(matches!(rename(&conn, &t.id, " favorite"), Err(VaultError::DuplicateTagName)),
+                "[{label}] rename to reserved name rejected");
+            assert_eq!(read_tag(&conn, &t.id).unwrap().name, "Plain", "[{label}] name unchanged");
+        }
+    }
+
+    #[test]
+    fn crud_on_favorite_tag_id_returns_not_found() {
+        for (label, conn) in both_dbs() {
+            let fav = ensure_favorite_tag(&conn).unwrap();
+            assert!(matches!(rename(&conn, &fav, "Starred"), Err(VaultError::TagNotFound)), "[{label}] rename");
+            assert!(matches!(recolor(&conn, &fav, Some("#000000")), Err(VaultError::TagNotFound)), "[{label}] recolor");
+            assert!(matches!(delete(&conn, &fav), Err(VaultError::TagNotFound)), "[{label}] delete");
+            let (name, color): (String, String) = conn.query_row(
+                "SELECT name, color FROM tags WHERE id = ?1", [&fav], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            assert_eq!((name.as_str(), color.as_str()), (FAVORITE_TAG, FAVORITE_COLOR), "[{label}] favorite tag untouched");
+        }
+    }
+
+    #[test]
+    fn is_valid_color_accepts_only_rrggbb() {
+        assert!(is_valid_color("#a1B2c3"));
+        for bad in ["", "#", "a1b2c3", "#a1b2c", "#a1b2c3d", "#a1b2cg", "#ä1b2c"] {
+            assert!(!is_valid_color(bad), "{bad:?} rejected");
+        }
+    }
+
+    #[test]
+    fn tag_links_on_trashed_entry_return_entry_not_found() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "e-trash", "Trash", 0);
+            conn.execute("UPDATE entries SET is_deleted = 1, updated_at = 5 WHERE id = 'e-trash'", []).unwrap();
+            let t = create(&conn, "Any", None).unwrap();
+            assert!(matches!(set_entry_tags(&conn, "e-trash", &[t.id.clone()], 99), Err(VaultError::EntryNotFound)),
+                "[{label}] set_entry_tags on trashed entry");
+            assert!(matches!(set_entry_tag(&conn, "e-trash", &t.id, true, 99), Err(VaultError::EntryNotFound)),
+                "[{label}] set_entry_tag on trashed entry");
+            let links: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM entry_tags WHERE entry_id = 'e-trash'", [], |r| r.get(0)).unwrap();
+            let ts: i64 = conn.query_row(
+                "SELECT updated_at FROM entries WHERE id = 'e-trash'", [], |r| r.get(0)).unwrap();
+            assert_eq!(links, 0, "[{label}] rolled back: no link added");
+            assert_eq!(ts, 5, "[{label}] rolled back: updated_at untouched");
         }
     }
 
