@@ -144,7 +144,12 @@ fn lower_entry(e: &keepass::db::Entry) -> KdbxEntry {
         "TimeOtp-Secret",
     ]
     .iter()
-    .find_map(|k| field_str(e, k).map(|v| (k.to_string(), v)))
+    // A blank seed key must not shadow a populated alias after it.
+    .find_map(|k| {
+        field_str(e, k)
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| (k.to_string(), v))
+    })
     {
         Some((k, v)) => (Some(k), Some(v)),
         None => (None, None),
@@ -434,6 +439,9 @@ fn totp_uri(title: &str, raw: &str) -> Option<String> {
         } else {
             label
         };
+        // The seed lands in a URI query unescaped: only a valid bare seed
+        // (no `&`, `%`, `#`, ...) may, so it cannot smuggle in parameters.
+        crate::totp::parse(raw.trim()).ok()?;
         format!("otpauth://totp/{}?secret={}", label, raw.trim())
     };
     crate::totp::parse(&candidate).ok().map(|_| candidate)
@@ -733,6 +741,41 @@ mod tests {
             )
             .unwrap();
         assert_eq!(otp, 0);
+    }
+
+    #[test]
+    fn import_keeps_seed_with_query_syntax_as_protected_field() {
+        let conn = db::create_fresh().unwrap();
+        let mut e = entry("MFA");
+        e.totp_raw = Some("JBSWY3DPEHPK3PXP&digits=8".into());
+        e.totp_key = Some("TOTP Seed".into());
+        import(&conn, &one(vec![e], vec![]), 1_000).unwrap();
+        let otp: i64 = conn
+            .query_row("SELECT count(*) FROM entry_fields WHERE name='TOTP'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(otp, 0, "a seed must not alter the URI parameters");
+        let (prot, val): (i64, String) = conn
+            .query_row(
+                "SELECT is_protected, value FROM entry_fields WHERE name='TOTP Seed'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((prot, val.as_str()), (1, "JBSWY3DPEHPK3PXP&digits=8"));
+    }
+
+    #[test]
+    fn lower_entry_skips_blank_seed_key() {
+        use keepass::db::{Entry, Value};
+        let mut e = Entry::new();
+        e.fields.insert("otp".into(), Value::Unprotected("  ".into()));
+        e.fields.insert(
+            "TOTP Seed".into(),
+            Value::Protected("JBSWY3DPEHPK3PXP".as_bytes().into()),
+        );
+        let low = lower_entry(&e);
+        assert_eq!(low.totp_key.as_deref(), Some("TOTP Seed"));
+        assert_eq!(low.totp_raw.as_deref(), Some("JBSWY3DPEHPK3PXP"));
     }
 
     #[test]

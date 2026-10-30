@@ -23,19 +23,24 @@ impl std::fmt::Debug for TotpParams {
     }
 }
 
-fn decode_secret(s: &str) -> Result<Vec<u8>> {
-    let cleaned: String = s.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '=').collect::<String>().to_uppercase();
+fn decode_secret(s: &str) -> Result<Zeroizing<Vec<u8>>> {
+    // Upper-casing grows a char at most 3x in bytes: reserve that up front so
+    // the seed text never reallocates and leaves an unwiped copy behind.
+    let mut cleaned = Zeroizing::new(String::with_capacity(s.len() * 3));
+    cleaned.extend(s.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '=').flat_map(char::to_uppercase));
     base32::decode(base32::Alphabet::Rfc4648 { padding: false }, &cleaned)
+        .map(Zeroizing::new)
         .filter(|b| !b.is_empty())
         .ok_or_else(|| VaultError::TotpParse("secret is not valid base32".into()))
 }
 
 /// RFC 3986 percent-decoding of one query component (`+` is left as-is).
 /// A malformed escape or non-UTF-8 result is a parse error, not a guess.
-fn percent_decode(s: &str) -> Result<String> {
+/// The output may be the seed, so every buffer is wiped on drop.
+fn percent_decode(s: &str) -> Result<Zeroizing<String>> {
     let bad = || VaultError::TotpParse("otpauth URI has an invalid percent-escape".into());
     let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
+    let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
@@ -48,7 +53,8 @@ fn percent_decode(s: &str) -> Result<String> {
             i += 1;
         }
     }
-    String::from_utf8(out).map_err(|_| bad())
+    let text = std::str::from_utf8(&out).map_err(|_| bad())?;
+    Ok(Zeroizing::new(text.to_owned()))
 }
 
 pub fn parse(input: &str) -> Result<TotpParams> {
@@ -60,11 +66,19 @@ pub fn parse(input: &str) -> Result<TotpParams> {
         // one would yield codes the issuer never accepts.
         let (mut digits, mut period, mut algo) = (6u32, 30u32, TotpAlgo::Sha1);
         for pair in query.split('&') {
-            let Some((k, v)) = pair.split_once('=') else { continue };
+            let (k, v) = match pair.split_once('=') {
+                Some((k, v)) => (percent_decode(k)?, v),
+                // A bare recognised key is present with an empty value, so
+                // the checks below reject it; other bare tokens are ignored.
+                None => match percent_decode(pair) {
+                    Ok(k) => (k, ""),
+                    Err(_) => continue,
+                },
+            };
             // Values of unknown keys (e.g. a free-text `issuer`) are never
             // decoded, so a stray `%` there cannot fail the whole URI.
-            match percent_decode(k)?.as_str() {
-                "secret" => secret = Some(decode_secret(&Zeroizing::new(percent_decode(v)?))?),
+            match k.as_str() {
+                "secret" => secret = Some(decode_secret(&percent_decode(v)?)?),
                 "digits" => {
                     digits = percent_decode(v)?
                         .parse()
@@ -91,9 +105,9 @@ pub fn parse(input: &str) -> Result<TotpParams> {
             }
         }
         let secret = secret.ok_or_else(|| VaultError::TotpParse("otpauth URI has no secret".into()))?;
-        Ok(TotpParams { secret: Zeroizing::new(secret), digits, period, algo })
+        Ok(TotpParams { secret, digits, period, algo })
     } else {
-        Ok(TotpParams { secret: Zeroizing::new(decode_secret(input)?), digits: 6, period: 30, algo: TotpAlgo::Sha1 })
+        Ok(TotpParams { secret: decode_secret(input)?, digits: 6, period: 30, algo: TotpAlgo::Sha1 })
     }
 }
 
@@ -220,6 +234,21 @@ mod tests {
             let uri = format!("{base}{extra}");
             assert!(matches!(parse(&uri), Err(crate::error::VaultError::TotpParse(_))), "{uri}");
         }
+    }
+
+    #[test]
+    fn bare_recognised_keys_are_rejected_and_unknown_ones_ignored() {
+        let base = "otpauth://totp/x?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+        for extra in ["&digits", "&period", "&algorithm", "&%64igits"] {
+            let uri = format!("{base}{extra}");
+            assert!(matches!(parse(&uri), Err(crate::error::VaultError::TotpParse(_))), "{uri}");
+        }
+        assert!(matches!(
+            parse("otpauth://totp/x?secret&digits=6"),
+            Err(crate::error::VaultError::TotpParse(_))
+        ));
+        let p = parse(&format!("{base}&issuer&100%&")).unwrap();
+        assert_eq!((p.digits, p.period, p.secret.len()), (6, 30, 20));
     }
 
     #[test]
