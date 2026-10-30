@@ -9,7 +9,7 @@
 //! the caller answers `invalid_url`.
 
 /// Lowercased host with scheme, userinfo, port, path, query and fragment
-/// stripped. Both `/` and `\` terminate the authority (WHATWG "special
+/// stripped. A port must be empty or decimal `0..=65535`, else `None`. Both `/` and `\` terminate the authority (WHATWG "special
 /// scheme" rule: real browsers treat a backslash exactly like a forward
 /// slash for http(s)/ws(s) authorities), so a backslash-obfuscated authority
 /// cannot be smuggled through as userinfo. IPv6 literals keep their brackets
@@ -40,14 +40,28 @@ pub fn host_of(url: &str) -> Option<String> {
         .rsplit_once('@')
         .map(|(_, h)| h)
         .unwrap_or(authority);
-    let host = if authority.starts_with('[') {
+    let (host, port) = if authority.starts_with('[') {
         match authority.find(']') {
-            Some(end) => &authority[..=end],
+            Some(end) => {
+                let (h, after) = authority.split_at(end + 1);
+                match after.strip_prefix(':') {
+                    Some(p) => (h, p),
+                    None if after.is_empty() => (h, ""),
+                    None => return None,
+                }
+            }
             None => return None,
         }
     } else {
-        authority.split(':').next().unwrap_or("")
+        authority.split_once(':').unwrap_or((authority, ""))
     };
+    // An empty port (`host:`) is allowed; anything else must be a real port,
+    // so `evil.com:x.example.com` cannot pass as `evil.com`.
+    if !port.is_empty()
+        && !(port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u32>().is_ok_and(|n| n <= 65535))
+    {
+        return None;
+    }
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     if host.is_empty() || host == "[]" {
         return None;
@@ -178,6 +192,33 @@ mod tests {
             "[::1]",
             "a properly terminated IPv6 literal still works"
         );
+    }
+
+    #[test]
+    fn rejects_a_non_numeric_or_out_of_range_port() {
+        for bad in [
+            "https://example.com:bogus",
+            "https://evil.com:x.example.com/",
+            "https://example.com:65536",
+            "https://example.com:99999999999999999999",
+            "https://example.com:+80",
+            "https://example.com:80:80",
+            "https://[::1]:bogus/x",
+            "https://[::1]x",
+            "https://[::1]:65536",
+        ] {
+            assert!(host_of(bad).is_none(), "{bad:?} must not yield a host");
+        }
+        assert!(!same_site("https://evil.com:x.example.com/", "https://evil.com"));
+    }
+
+    #[test]
+    fn accepts_empty_or_valid_ports() {
+        assert_eq!(host_of("https://example.com:/x").unwrap(), "example.com");
+        assert_eq!(host_of("https://example.com:0").unwrap(), "example.com");
+        assert_eq!(host_of("https://example.com:65535").unwrap(), "example.com");
+        assert_eq!(host_of("https://[::1]:").unwrap(), "[::1]");
+        assert_eq!(host_of("https://[::1]").unwrap(), "[::1]");
     }
 
     #[test]
