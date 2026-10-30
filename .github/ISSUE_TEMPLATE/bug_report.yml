@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in Kokos does not work the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste the contents of a vault, a password, a key file, or a recovery hint here. A made-up example that shows the same problem is always enough.
+        A security problem does not belong in a public issue — use "Report a security vulnerability" instead.
+  - type: input
+    id: version
+    attributes:
+      label: Kokos version
+      description: Shown in About.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-details
+    attributes:
+      label: OS version and how Kokos was installed
+      placeholder: Ubuntu 24.04, .deb from the apt repository
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Error text or a screenshot helps. Check that neither shows a secret.
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and extension version
+      description: Only if the problem involves the browser extension.

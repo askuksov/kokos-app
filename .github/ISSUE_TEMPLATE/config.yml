@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/askuksov/kokos-app/security/advisories/new
+    about: Never in a public issue. This opens a private report only the maintainers can see.
