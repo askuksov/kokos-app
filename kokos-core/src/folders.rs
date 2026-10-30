@@ -130,7 +130,9 @@ pub fn find_or_create(conn: &Connection, parent_id: Option<&str>, name: &str, no
     let parent = parent_id.unwrap_or("root");
     let existing: Option<String> = conn
         .query_row(
-            "SELECT id FROM folders WHERE name = ?1 AND parent_id = ?2",
+            // A Go-migrated top-level folder has parent_id NULL, not 'root'.
+            "SELECT id FROM folders
+              WHERE name = ?1 AND (parent_id = ?2 OR (?2 = 'root' AND parent_id IS NULL))",
             rusqlite::params![name, parent],
             |r| r.get(0),
         )
@@ -200,13 +202,15 @@ pub fn delete(conn: &Connection, id: &str, now: i64) -> Result<()> {
         })
         .optional()?
         .ok_or(VaultError::FolderNotFound)?;
+    // A Go-migrated top-level folder has parent_id NULL; its contents land in root.
+    let dest = parent.as_deref().unwrap_or("root");
     tx.execute(
         "UPDATE folders SET parent_id = ?1, updated_at = ?2 WHERE parent_id = ?3",
-        rusqlite::params![parent, now, id],
+        rusqlite::params![dest, now, id],
     )?;
     tx.execute(
         "UPDATE entries SET folder_id = ?1, updated_at = ?2 WHERE folder_id = ?3",
-        rusqlite::params![parent, now, id],
+        rusqlite::params![dest, now, id],
     )?;
     tx.execute("DELETE FROM folders WHERE id = ?1", [id])?;
     tx.commit()?;
@@ -561,6 +565,40 @@ mod tests {
             assert_eq!(leaf_parent.as_deref(), Some(parent.id.as_str()),
                 "[{label}] mid's subfolder reparented to the grandparent");
             assert!(get_folder(&conn, &leaf.id).unwrap().is_some(), "[{label}] the subfolder subtree survives");
+        }
+    }
+
+    #[test]
+    fn delete_null_parent_folder_moves_contents_to_root() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            seed_folder(&conn, "go-top", "GoTop", None);
+            seed_folder(&conn, "go-sub", "GoSub", Some("go-top"));
+            seed_entry(&conn, "in-go-top", "In GoTop", 0);
+            conn.execute("UPDATE entries SET folder_id = 'go-top' WHERE id = 'in-go-top'", []).unwrap();
+
+            delete(&conn, "go-top", now).unwrap();
+
+            let folder: Option<String> = conn.query_row(
+                "SELECT folder_id FROM entries WHERE id = 'in-go-top'", [], |r| r.get(0)).unwrap();
+            assert_eq!(folder.as_deref(), Some("root"), "[{label}] entry lands in root, not NULL");
+            let sub_parent: Option<String> = conn.query_row(
+                "SELECT parent_id FROM folders WHERE id = 'go-sub'", [], |r| r.get(0)).unwrap();
+            assert_eq!(sub_parent.as_deref(), Some("root"), "[{label}] subfolder lands in root, not NULL");
+        }
+    }
+
+    #[test]
+    fn find_or_create_reuses_null_parent_top_level_folder() {
+        for (label, conn) in both_dbs() {
+            seed_folder(&conn, "go-imp", "GoImported", None);
+            let f = find_or_create(&conn, Some("root"), "GoImported", 1).unwrap();
+            assert_eq!(f.id, "go-imp", "[{label}] NULL-parent folder reused under root");
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM folders WHERE name = 'GoImported'", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1, "[{label}] no duplicate sibling");
+            let other = find_or_create(&conn, Some("go-imp"), "GoImported", 1).unwrap();
+            assert_ne!(other.id, "go-imp", "[{label}] a non-root parent does not match NULL");
         }
     }
 
