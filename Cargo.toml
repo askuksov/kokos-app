@@ -21,10 +21,15 @@ thiserror = "2"
 [profile.dev.package."*"]
 opt-level = 3
 
-# Vendored keepass 0.8.7 with a runtime <Group> nesting-depth guard in
-# Group::from_xml. Upstream recurses unbounded, so a hostile deeply-nested
-# KDBX file stack-overflows the process past the fail-closed boundary.
-# That guard (src/error.rs + src/xml_db/parse/group.rs) is the only
-# divergence from crates.io 0.8.7; everything else is verbatim.
+# Vendored keepass 0.8.7 hardened for untrusted KDBX input. Divergences from
+# crates.io 0.8.7 (each marked "Kokos patch" in the source); everything else
+# is verbatim:
+# - parse nesting-depth guard for Group and Entry/History recursion
+#   (src/error.rs, src/xml_db/parse/), so deep nesting fails instead of
+#   overflowing the stack;
+# - KDF cost bounds (Argon2 memory/iterations/lanes, AES rounds) checked at
+#   header parse, before any key transform (src/config.rs, src/format/);
+# - 1 GiB cap on decompressed payload (src/compression.rs);
+# - db::History.entries widened to pub for the depth-guard regression test.
 [patch.crates-io]
 keepass = { path = "vendor/keepass-0.8.7" }

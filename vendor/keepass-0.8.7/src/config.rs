@@ -225,7 +225,45 @@ fn serialize_argon2_version<S: serde::Serializer>(
     serializer.serialize_u32(version.as_u32())
 }
 
+// Kokos patch: KDF params come from the unauthenticated outer header and the
+// key transform runs before the header HMAC check, so a crafted file could
+// request a huge Argon2 allocation (OOM abort) or effectively endless work.
+// Reject costs far above anything a real KeePass client produces.
+const MAX_ARGON2_MEMORY: u64 = 2 * 1024 * 1024 * 1024; // bytes
+const MAX_ARGON2_ITERATIONS: u64 = 100;
+const MAX_ARGON2_PARALLELISM: u32 = 64;
+const MAX_AES_ROUNDS: u64 = 1_000_000_000;
+
 impl KdfConfig {
+    /// Kokos patch: fail before any key transform / allocation when the
+    /// parsed KDF cost exceeds the caps above.
+    pub(crate) fn check_cost(&self) -> Result<(), KdfConfigError> {
+        let ok = match self {
+            KdfConfig::Aes { rounds } => *rounds <= MAX_AES_ROUNDS,
+            KdfConfig::Argon2 {
+                memory,
+                iterations,
+                parallelism,
+                ..
+            }
+            | KdfConfig::Argon2id {
+                memory,
+                iterations,
+                parallelism,
+                ..
+            } => {
+                *memory <= MAX_ARGON2_MEMORY
+                    && *iterations <= MAX_ARGON2_ITERATIONS
+                    && *parallelism <= MAX_ARGON2_PARALLELISM
+            }
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(KdfConfigError::KdfCostTooHigh)
+        }
+    }
+
     #[cfg(feature = "save_kdbx4")]
     fn seed_size(&self) -> usize {
         match self {
