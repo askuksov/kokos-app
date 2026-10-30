@@ -70,7 +70,11 @@ pub fn auto_delete_old(conn: &Connection, days: i64) -> Result<usize> {
     if days <= 0 {
         return Ok(0);
     }
-    let cutoff = db::now_unix() - days * 86_400;
+    // A crafted retention value must not overflow into "purge everything".
+    let Some(window) = days.checked_mul(86_400) else {
+        return Ok(0);
+    };
+    let cutoff = db::now_unix().saturating_sub(window);
     let n = conn.execute(
         "DELETE FROM entries WHERE is_deleted = 1 AND deleted_at < ?1",
         [cutoff],
@@ -114,6 +118,19 @@ mod tests {
             let kept: i64 = conn.query_row("SELECT COUNT(*) FROM entries WHERE id='fresh'", [], |r| r.get(0)).unwrap();
             assert_eq!(gone, 0, "[{label}] old purged");
             assert_eq!(kept, 1, "[{label}] fresh kept");
+        }
+    }
+
+    #[test]
+    fn auto_delete_with_overflowing_days_purges_nothing() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "ovf", "Ovf", 0);
+            conn.execute("UPDATE entries SET is_deleted=1, deleted_at=100 WHERE id='ovf'", []).unwrap();
+            for days in [i64::MAX, i64::MAX / 86_400 + 1] {
+                assert_eq!(auto_delete_old(&conn, days).unwrap(), 0, "[{label}] days={days} purges nothing");
+            }
+            let kept: i64 = conn.query_row("SELECT COUNT(*) FROM entries WHERE id='ovf'", [], |r| r.get(0)).unwrap();
+            assert_eq!(kept, 1, "[{label}] trashed entry kept");
         }
     }
 
