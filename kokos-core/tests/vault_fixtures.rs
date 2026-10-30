@@ -251,31 +251,49 @@ fn first_save_after_migration_backs_up_pre_migration_bytes() {
     );
 }
 
-/// `write_container`'s atomic rename can land on
-/// disk even when `save()` goes on to return `Err` (e.g. the trailing
-/// directory `sync_all` failing right after a successful rename) — so
-/// `v.migrated` can stay `true` across a retry with a `.bak` that was
-/// already correctly written on the prior attempt. Simulate that by
-/// pre-seeding `.bak` with sentinel content before the (successful) save:
-/// the migrated-backup guard must see it already exists and skip the copy,
-/// not overwrite it with the now-migrated file.
+/// A `.bak` left over from an earlier session (e.g. a migration months ago)
+/// is not this cycle's rollback copy: the first migrated save of a new session
+/// must replace it with the current pre-migration bytes. The same-session
+/// retry case (must NOT clobber) is covered by a unit test in `vault.rs`,
+/// since it needs to fake a failed write.
 #[test]
-fn migrated_save_does_not_clobber_a_preexisting_bak() {
+fn migrated_save_replaces_a_stale_bak_from_an_earlier_session() {
+    use sha2::{Digest, Sha256};
+
     let dir = tempfile::tempdir().unwrap();
     let p = copy_fixture("v1_favorite.vault", &dir);
+    let original_hash = Sha256::digest(std::fs::read(&p).unwrap());
     let bak_path = dir.path().join("v1_favorite.vault.bak");
-    let sentinel = b"sentinel: pre-migration original from an earlier attempt".to_vec();
-    std::fs::write(&bak_path, &sentinel).unwrap();
+    std::fs::write(&bak_path, b"stale .bak from an earlier migration cycle").unwrap();
 
     let mut v = vault::open(&p, FIXTURE_PW, None).unwrap();
     assert!(v.migrated, "fixture must actually migrate for this test to mean anything");
     vault::save(&mut v).unwrap();
-    assert!(!v.migrated, "migrated must still clear once the (backup-skipped) save has succeeded");
+    assert!(!v.migrated, "migrated must clear once the backing-up save has succeeded");
 
     assert_eq!(
-        std::fs::read(&bak_path).unwrap(),
-        sentinel,
-        ".bak must be untouched — a migrated save must never overwrite a pre-existing .bak"
+        Sha256::digest(std::fs::read(&bak_path).unwrap()),
+        original_hash,
+        "a stale .bak must be replaced by this cycle's pre-migration bytes"
+    );
+}
+
+#[test]
+fn change_password_on_a_migrated_vault_clears_migrated() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = copy_fixture("v1_favorite.vault", &dir);
+    let bak_path = dir.path().join("v1_favorite.vault.bak");
+
+    let mut v = vault::open(&p, FIXTURE_PW, None).unwrap();
+    assert!(v.migrated, "fixture must actually migrate for this test to mean anything");
+    vault::change_password(&mut v, b"new-pw", None, KeyfileAction::Keep).unwrap();
+    assert!(!v.migrated, "the migrated DB is on disk after change_password");
+    assert!(!bak_path.exists());
+
+    vault::save(&mut v).unwrap();
+    assert!(
+        !bak_path.exists(),
+        "a later save must not take a pre-migration .bak of an already-migrated file"
     );
 }
 

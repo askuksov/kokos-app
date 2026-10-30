@@ -44,10 +44,20 @@ fn rejects_foreign_file() {
     assert!(matches!(err, kokos_core::VaultError::NotAVaultFile));
 }
 
+/// The fixture keeps its header intact and only cuts the encrypted body, so
+/// the header probe (which never reads the body) must still succeed.
 #[test]
-fn truncated_file_errors_without_panic() {
-    let err = read_header_only(&fixture("v1_truncated.vault"));
-    assert!(err.is_ok() || matches!(err.unwrap_err(), kokos_core::VaultError::HeaderMalformed));
+fn truncated_body_still_reads_header() {
+    assert!(read_header_only(&fixture("v1_truncated.vault")).is_ok());
+}
+
+#[test]
+fn truncated_header_is_malformed() {
+    let bytes = std::fs::read(fixture("v1_basic.vault")).unwrap();
+    let cut = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(cut.path(), &bytes[..40]).unwrap();
+    let err = read_header_only(cut.path()).unwrap_err();
+    assert!(matches!(err, kokos_core::VaultError::HeaderMalformed), "got {err:?}");
 }
 
 #[test]

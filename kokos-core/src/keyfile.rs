@@ -12,16 +12,43 @@ use crate::error::{Result, VaultError};
 /// whole into memory.
 const MAX_KEYFILE_BYTES: u64 = 16 * 1024 * 1024;
 
-fn read_capped(path: &Path) -> Result<Vec<u8>> {
+/// Streams the key file into SHA-256 through one fixed, wiped chunk buffer, so
+/// no growing `Vec` leaves stray copies of key-file bytes behind on realloc or
+/// on an error path. Only regular files are accepted: a FIFO or device node
+/// could block the read forever or never end.
+fn hash_capped(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
     use std::io::Read;
-    let f = std::fs::File::open(path).map_err(|_| VaultError::KeyfileUnreadable)?;
-    let mut buf = Vec::new();
-    f.take(MAX_KEYFILE_BYTES + 1).read_to_end(&mut buf).map_err(|_| VaultError::KeyfileUnreadable)?;
-    if buf.len() as u64 > MAX_KEYFILE_BYTES {
-        buf.zeroize();
+    let is_file = |m: std::fs::Metadata| m.is_file();
+    if !std::fs::metadata(path).map(is_file).unwrap_or(false) {
         return Err(VaultError::KeyfileUnreadable);
     }
-    Ok(buf)
+    let mut f = std::fs::File::open(path).map_err(|_| VaultError::KeyfileUnreadable)?;
+    // Re-check on the handle: the path may have been swapped since the stat.
+    if !f.metadata().map(is_file).unwrap_or(false) {
+        return Err(VaultError::KeyfileUnreadable);
+    }
+
+    let mut hasher = Sha256::new();
+    let mut chunk = Zeroizing::new([0u8; 8192]);
+    let mut total: u64 = 0;
+    loop {
+        let n = match f.read(chunk.as_mut()) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(VaultError::KeyfileUnreadable),
+        };
+        total += n as u64;
+        if total > MAX_KEYFILE_BYTES {
+            return Err(VaultError::KeyfileUnreadable);
+        }
+        hasher.update(&chunk[..n]);
+    }
+    let mut digest = hasher.finalize();
+    let mut out = Zeroizing::new([0u8; 32]);
+    out.copy_from_slice(&digest);
+    digest.as_mut_slice().zeroize();
+    Ok(out)
 }
 
 pub fn key_material(password: &[u8], keyfile: Option<&Path>) -> Result<Zeroizing<Vec<u8>>> {
@@ -33,10 +60,8 @@ pub fn key_material(password: &[u8], keyfile: Option<&Path>) -> Result<Zeroizing
         if path.components().any(|c| c == std::path::Component::ParentDir) {
             return Err(VaultError::PathNotAllowed);
         }
-        let contents = Zeroizing::new(read_capped(path)?);
-        let mut digest = Sha256::digest(&contents);
-        material.extend_from_slice(&digest);
-        digest.as_mut_slice().zeroize();
+        let digest = hash_capped(path)?;
+        material.extend_from_slice(digest.as_ref());
     }
     Ok(material)
 }
@@ -75,6 +100,42 @@ mod tests {
         let traversal = dir.path().join("sub/../kf");
         let err = key_material(b"pw", Some(&traversal)).unwrap_err();
         assert!(matches!(err, VaultError::PathNotAllowed), "`..` must be refused even when the file exists");
+    }
+
+    #[test]
+    fn oversized_keyfile_is_rejected() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.as_file().set_len(MAX_KEYFILE_BYTES + 1).unwrap();
+        f.flush().unwrap();
+        let err = key_material(b"pw", Some(f.path())).unwrap_err();
+        assert!(matches!(err, VaultError::KeyfileUnreadable));
+    }
+
+    #[test]
+    fn keyfile_at_the_cap_is_accepted() {
+        let f = tempfile::NamedTempFile::new().unwrap();
+        f.as_file().set_len(MAX_KEYFILE_BYTES).unwrap();
+        let m = key_material(b"pw", Some(f.path())).unwrap();
+        let expected = Sha256::digest(vec![0u8; MAX_KEYFILE_BYTES as usize]);
+        assert_eq!(&m[2..], expected.as_slice());
+    }
+
+    #[test]
+    fn directory_is_not_a_keyfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = key_material(b"pw", Some(dir.path())).unwrap_err();
+        assert!(matches!(err, VaultError::KeyfileUnreadable));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_is_rejected_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("kf.fifo");
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(status.success());
+        let err = key_material(b"pw", Some(&fifo)).unwrap_err();
+        assert!(matches!(err, VaultError::KeyfileUnreadable));
     }
 
     #[test]

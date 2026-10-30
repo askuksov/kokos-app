@@ -1,12 +1,12 @@
 //! Migration of a live v1 container to the current schema.
 //!
 //! Runs in memory at open time: the file on disk is untouched until the user
-//! saves. Mostly additive -- the Go version keeps working as a fallback (it
-//! reads favorites from the tag, ignores is_favorite, and treats
-//! schema_version as one more metadata row) -- but widening a CHECK
-//! constraint (entry_fields.field_type, field_templates.field_type) is not
-//! expressible as an ALTER in SQLite, so those columns go through a
-//! drop-and-rename table rebuild in place.
+//! saves. A re-saved file always carries the `KOKOS` magic, which the Go
+//! version cannot read, so rollback is only via the pre-migration `.bak` that
+//! the first save keeps. Mostly additive, but widening a CHECK constraint
+//! (entry_fields.field_type, field_templates.field_type) is not expressible
+//! as an ALTER in SQLite, so those columns go through a drop-and-rename table
+//! rebuild in place.
 
 use rusqlite::Connection;
 

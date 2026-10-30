@@ -8,7 +8,9 @@ use rand::Rng;
 
 use crate::error::{Result, VaultError};
 
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+/// A random temp path next to `path`, so the final rename stays within one
+/// directory (and one filesystem).
+fn temp_sibling(path: &Path) -> Result<(&Path, PathBuf)> {
     let dir = path.parent().ok_or(VaultError::Io("path has no parent".into()))?;
     let suffix: u64 = rand::thread_rng().gen();
     let tmp: PathBuf = dir.join(format!(
@@ -16,6 +18,19 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         path.file_name().and_then(|n| n.to_str()).unwrap_or("vault"),
         suffix
     ));
+    Ok((dir, tmp))
+}
+
+/// Best-effort: by now the rename has committed and the new file is what the
+/// disk holds, so a failing directory fsync must not report the write as failed.
+fn sync_dir(dir: &Path) {
+    if let Ok(d) = std::fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+}
+
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let (dir, tmp) = temp_sibling(path)?;
 
     let result: Result<()> = (|| {
         let mut f = std::fs::File::create(&tmp)?;
@@ -31,9 +46,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         return Err(e);
     }
 
-    if let Ok(d) = std::fs::File::open(dir) {
-        d.sync_all()?;
-    }
+    sync_dir(dir);
     Ok(())
 }
 
@@ -77,20 +90,41 @@ fn harden_permissions(f: &std::fs::File, target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The `.bak` path `backup()` writes to. Exposed so callers (`vault::save`'s
-/// migrated-backup guard) can check its existence without duplicating the
-/// suffixing logic and risking it drifting out of sync with `backup()` itself.
+/// The `.bak` path `backup()` writes to. Exposed so callers (e.g.
+/// `vault::change_password` removing its transient backup) don't duplicate the
+/// suffixing logic and risk it drifting out of sync with `backup()` itself.
 pub fn backup_path(path: &Path) -> PathBuf {
     let mut bak = path.as_os_str().to_owned();
     bak.push(".bak");
     PathBuf::from(bak)
 }
 
+/// Copies `path` to its `.bak` the same way `write_atomic` writes: temp file,
+/// fsync, rename. A crash or a full disk mid-copy therefore never leaves a
+/// truncated `.bak` in place of a good one.
 pub fn backup(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    std::fs::copy(path, backup_path(path))?;
+    let bak = backup_path(path);
+    let (dir, tmp) = temp_sibling(&bak)?;
+
+    let result: Result<()> = (|| {
+        let mut src = std::fs::File::open(path)?;
+        let mut f = std::fs::File::create(&tmp)?;
+        #[cfg(unix)]
+        harden_permissions(&f, path)?;
+        std::io::copy(&mut src, &mut f)?;
+        f.sync_all()?;
+        rename_replacing(&tmp, &bak)
+    })();
+
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    sync_dir(dir);
     Ok(())
 }
 
@@ -134,6 +168,22 @@ mod tests {
         std::fs::write(&p, b"data").unwrap();
         backup(&p).unwrap();
         assert_eq!(std::fs::read(dir.path().join("a.vault.bak")).unwrap(), b"data");
+    }
+
+    #[test]
+    fn backup_replaces_existing_bak_and_leaves_no_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.vault");
+        std::fs::write(&p, b"fresh").unwrap();
+        std::fs::write(backup_path(&p), b"stale").unwrap();
+        backup(&p).unwrap();
+        assert_eq!(std::fs::read(backup_path(&p)).unwrap(), b"fresh");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file left behind: {:?}", leftovers);
     }
 
     #[test]
