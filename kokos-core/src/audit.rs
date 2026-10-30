@@ -1,8 +1,8 @@
 //! In-vault audit log: an append-only journal of security events
 //! (unlock, lock, failed attempts, credential rotation, ...) capped at the
 //! 500 newest rows. `detail` is a human-readable label ONLY -- never a field
-//! value, password, or key material; the secret boundary is enforced by the
-//! `append` signature (`&str` / `Option<&str>`), not by any runtime check.
+//! value, password, or key material. That boundary is a caller contract:
+//! nothing checks it, neither at runtime nor through the `append` types.
 
 use rusqlite::Connection;
 
