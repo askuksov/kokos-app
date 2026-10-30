@@ -9,11 +9,23 @@ use crate::error::{Result, VaultError};
 
 pub const MAX_ATTACHMENT_SIZE: usize = 10 * 1024 * 1024;
 
-/// Combined attachment bytes allowed per vault: the saved file must stay
+/// Largest database image an `add` may grow to: the saved file must stay
 /// under `vault::MAX_VAULT_FILE_SIZE` or `open()` rejects it, so leave
-/// 64 MiB of headroom for the rest of the DB and the container overhead.
-const MAX_TOTAL_ATTACHMENT_BYTES: i64 =
+/// 64 MiB of headroom for row/page overhead and the container overhead.
+const MAX_DB_IMAGE_BYTES: i64 =
     crate::vault::MAX_VAULT_FILE_SIZE as i64 - 64 * 1024 * 1024;
+
+/// Current size of the serialized database image (what the vault saves),
+/// free pages included.
+fn db_image_bytes(conn: &Connection) -> Result<i64> {
+    let pages: i64 = conn.pragma_query_value(None, "page_count", |r| r.get(0))?;
+    let page_size: i64 = conn.pragma_query_value(None, "page_size", |r| r.get(0))?;
+    Ok(pages.saturating_mul(page_size))
+}
+
+fn fits_budget(image_bytes: i64, add: i64) -> bool {
+    image_bytes.saturating_add(add) <= MAX_DB_IMAGE_BYTES
+}
 
 #[derive(Debug, Clone)]
 pub struct AttachmentMeta {
@@ -43,9 +55,7 @@ pub fn add(
         return Err(VaultError::AttachmentTooLarge);
     }
     let size = data.len() as i64;
-    let total: i64 =
-        conn.query_row("SELECT COALESCE(SUM(size), 0) FROM attachments", [], |r| r.get(0))?;
-    if total.saturating_add(size) > MAX_TOTAL_ATTACHMENT_BYTES {
+    if !fits_budget(db_image_bytes(conn)?, size) {
         return Err(VaultError::AttachmentTooLarge);
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -132,24 +142,24 @@ mod tests {
     }
 
     #[test]
-    fn add_enforces_vault_wide_budget() {
+    fn budget_counts_whole_db_image() {
         for (label, conn) in both_dbs() {
             seed_entry(&conn, "att-budget", "Budget", 0);
-            let existing: i64 = conn
-                .query_row("SELECT COALESCE(SUM(size), 0) FROM attachments", [], |r| r.get(0))
-                .unwrap();
-            // A tiny blob whose recorded size fills the budget up to 5 bytes short.
-            conn.execute(
-                "INSERT INTO attachments (id, entry_id, filename, mime_type, data, size, created_at)
-                 VALUES ('att-huge', 'att-budget', 'huge.bin', NULL, x'00', ?1, 1)",
-                [MAX_TOTAL_ATTACHMENT_BYTES - existing - 5],
-            )
-            .unwrap();
-            assert!(matches!(add(&conn, "att-budget", "over.bin", None, b"123456", 1), Err(VaultError::AttachmentTooLarge)),
-                "[{label}] exceeding the vault-wide budget rejected");
-            assert!(add(&conn, "att-budget", "fits.bin", None, b"12345", 1).is_ok(),
-                "[{label}] exactly filling the budget accepted");
+            let before = db_image_bytes(&conn).unwrap();
+            assert!(before > 0, "[{label}] image size is measured");
+            // Non-attachment content grows the image too.
+            let notes = "n".repeat(256 * 1024);
+            conn.execute("UPDATE entries SET notes = ?1 WHERE id = 'att-budget'", [&notes]).unwrap();
+            let after = db_image_bytes(&conn).unwrap();
+            assert!(after >= before + notes.len() as i64, "[{label}] notes count toward the image");
         }
+    }
+
+    #[test]
+    fn fits_budget_caps_image_plus_new_bytes() {
+        assert!(fits_budget(MAX_DB_IMAGE_BYTES - 5, 5), "exactly filling the budget accepted");
+        assert!(!fits_budget(MAX_DB_IMAGE_BYTES - 5, 6), "exceeding the budget rejected");
+        assert!(!fits_budget(i64::MAX, 1), "no overflow");
     }
 
     #[test]

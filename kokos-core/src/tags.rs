@@ -151,8 +151,23 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Bumps a live entry's updated_at; `EntryNotFound` when it is missing or
+/// trashed. Runs before any link write so a missing entry never reaches the
+/// entry_tags foreign key.
+fn touch_live_entry(conn: &Connection, entry_id: &str, now: i64) -> Result<()> {
+    let n = conn.execute(
+        "UPDATE entries SET updated_at = ?1 WHERE id = ?2 AND is_deleted = 0",
+        rusqlite::params![now, entry_id],
+    )?;
+    if n == 0 {
+        return Err(VaultError::EntryNotFound);
+    }
+    Ok(())
+}
+
 pub fn set_entry_tags(conn: &Connection, entry_id: &str, tag_ids: &[String], now: i64) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
+    touch_live_entry(&tx, entry_id, now)?;
     let fav = fav_tag_id(&tx)?;
     match &fav {
         Some(f) => tx.execute(
@@ -170,32 +185,23 @@ pub fn set_entry_tags(conn: &Connection, entry_id: &str, tag_ids: &[String], now
             rusqlite::params![entry_id, tid],
         )?;
     }
-    let n = tx.execute(
-        "UPDATE entries SET updated_at = ?1 WHERE id = ?2 AND is_deleted = 0",
-        rusqlite::params![now, entry_id],
-    )?;
-    if n == 0 {
-        return Err(VaultError::EntryNotFound);
-    }
     tx.commit()?;
     Ok(())
 }
 
 /// Add or remove ONE tag on an entry (bulk tag +/-). `add=true` inserts
 /// (idempotent), `add=false` removes. Touches updated_at like the other
-/// tag ops. Not for the reserved favorite tag — use `toggle_favorite`.
+/// tag ops. The reserved favorite tag is rejected with `TagNotFound` — use
+/// `toggle_favorite`, which keeps `is_favorite` in sync.
 pub fn set_entry_tag(conn: &Connection, entry_id: &str, tag_id: &str, add: bool, now: i64) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
+    reject_favorite_id(&tx, tag_id)?;
+    touch_live_entry(&tx, entry_id, now)?;
     if add {
         tx.execute("INSERT OR IGNORE INTO entry_tags (entry_id, tag_id) VALUES (?1, ?2)", rusqlite::params![entry_id, tag_id])?;
     } else {
         tx.execute("DELETE FROM entry_tags WHERE entry_id = ?1 AND tag_id = ?2", rusqlite::params![entry_id, tag_id])?;
     }
-    let n = tx.execute(
-        "UPDATE entries SET updated_at = ?1 WHERE id = ?2 AND is_deleted = 0",
-        rusqlite::params![now, entry_id],
-    )?;
-    if n == 0 { return Err(VaultError::EntryNotFound); }
     tx.commit()?;
     Ok(())
 }
@@ -486,6 +492,18 @@ mod tests {
                 matches!(set_entry_tags(&conn, "ghost-entry", &[], now), Err(VaultError::EntryNotFound)),
                 "[{label}] nonexistent entry -> EntryNotFound"
             );
+            // A non-empty list must not reach the entry_tags foreign key first.
+            let t = create(&conn, "GhostTag", None).unwrap();
+            assert!(
+                matches!(set_entry_tags(&conn, "ghost-entry", &[t.id.clone()], now), Err(VaultError::EntryNotFound)),
+                "[{label}] nonexistent entry with tags -> EntryNotFound"
+            );
+            for add in [true, false] {
+                assert!(
+                    matches!(set_entry_tag(&conn, "ghost-entry", &t.id, add, now), Err(VaultError::EntryNotFound)),
+                    "[{label}] set_entry_tag(add={add}) on nonexistent entry -> EntryNotFound"
+                );
+            }
         }
     }
 
@@ -539,6 +557,23 @@ mod tests {
             let (name, color): (String, String) = conn.query_row(
                 "SELECT name, color FROM tags WHERE id = ?1", [&fav], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
             assert_eq!((name.as_str(), color.as_str()), (FAVORITE_TAG, FAVORITE_COLOR), "[{label}] favorite tag untouched");
+        }
+    }
+
+    #[test]
+    fn set_entry_tag_rejects_favorite_tag_id() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "e-fav-one", "FavOne", 0);
+            conn.execute("UPDATE entries SET updated_at = 5 WHERE id = 'e-fav-one'", []).unwrap();
+            let fav = ensure_favorite_tag(&conn).unwrap();
+            for add in [true, false] {
+                assert!(matches!(set_entry_tag(&conn, "e-fav-one", &fav, add, 99), Err(VaultError::TagNotFound)),
+                    "[{label}] set_entry_tag(add={add}) with the favorite id -> TagNotFound");
+            }
+            let (links, col, ts): (i64, i64, i64) = conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM entry_tags WHERE entry_id = e.id), e.is_favorite, e.updated_at
+                 FROM entries e WHERE e.id = 'e-fav-one'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+            assert_eq!((links, col, ts), (0, 0, 5), "[{label}] link, column and updated_at untouched");
         }
     }
 
