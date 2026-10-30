@@ -1,0 +1,30 @@
+[workspace]
+members = ["kokos-core", "src-tauri"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# Floor set by dependencies: ort 2.0.0-rc.13, image, time, plist and darling
+# declare rust-version 1.88. Active toolchain is 1.90.
+rust-version = "1.88"
+# Application crates, never published to crates.io.
+publish = false
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+thiserror = "2"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# Vendored keepass 0.8.7 with a runtime <Group> nesting-depth guard in
+# Group::from_xml. Upstream recurses unbounded, so a hostile deeply-nested
+# KDBX file stack-overflows the process past the fail-closed boundary.
+# That guard (src/error.rs + src/xml_db/parse/group.rs) is the only
+# divergence from crates.io 0.8.7; everything else is verbatim.
+[patch.crates-io]
+keepass = { path = "vendor/keepass-0.8.7" }
