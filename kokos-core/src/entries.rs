@@ -166,11 +166,13 @@ pub(crate) const SUMMARY_COLS: &str = "e.id, e.title, e.is_favorite, e.updated_a
     COALESCE(
       (SELECT ef.value FROM entry_fields ef
          WHERE ef.entry_id = e.id AND ef.template_id = 'tpl_username'
-           AND ef.is_protected = 0 LIMIT 1),
+           AND ef.is_protected = 0
+         ORDER BY ef.sort_order ASC, ef.id ASC LIMIT 1),
       (SELECT ef.value FROM entry_fields ef
          WHERE ef.entry_id = e.id
            AND (ef.template_id = 'tpl_email' OR ef.field_type = 'email')
-           AND ef.is_protected = 0 LIMIT 1)) AS username,
+           AND ef.is_protected = 0
+         ORDER BY ef.sort_order ASC, ef.id ASC LIMIT 1)) AS username,
     EXISTS(SELECT 1 FROM entry_fields ef
        WHERE ef.entry_id = e.id
          AND (ef.template_id = 'tpl_totp' OR ef.field_type = 'otp')) AS has_totp,
@@ -372,6 +374,20 @@ pub fn update(conn: &Connection, id: &str, patch: EntryPatch, now: i64) -> Resul
             "UPDATE entries SET is_favorite = ?1 WHERE id = ?2",
             rusqlite::params![fav as i64, id],
         )?;
+        // Keep the reserved tag link in step with the column.
+        if fav {
+            let fav_tag = crate::tags::ensure_favorite_tag(&tx)?;
+            tx.execute(
+                "INSERT OR IGNORE INTO entry_tags (entry_id, tag_id) VALUES (?1, ?2)",
+                rusqlite::params![id, fav_tag],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM entry_tags WHERE entry_id = ?1
+                   AND tag_id IN (SELECT id FROM tags WHERE name = ?2)",
+                rusqlite::params![id, crate::tags::FAVORITE_TAG],
+            )?;
+        }
     }
     if let Some(folder) = patch.folder_id {
         tx.execute(
@@ -503,6 +519,7 @@ fn reconcile_fields(conn: &Connection, entry_id: &str, inputs: Vec<FieldInput>, 
 pub fn set_fields(conn: &Connection, entry_id: &str, inputs: Vec<FieldInput>, now: i64) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     reconcile_fields(&tx, entry_id, inputs, now)?;
+    tx.execute("UPDATE entries SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, entry_id])?;
     tx.commit()?;
     Ok(())
 }
@@ -964,6 +981,33 @@ mod tests {
     }
 
     #[test]
+    fn update_is_favorite_syncs_reserved_tag_link() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "e-ufav", "UFav", 0);
+            let fav_links = |conn: &Connection| -> i64 {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM entry_tags et JOIN tags t ON t.id = et.tag_id
+                     WHERE et.entry_id = 'e-ufav' AND t.name = ?1",
+                    [crate::tags::FAVORITE_TAG],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            let patch = |fav: bool| EntryPatch {
+                title: None, notes: None, is_favorite: Some(fav), folder_id: None, fields: None,
+            };
+
+            assert!(update(&conn, "e-ufav", patch(true), 10).unwrap().unwrap().is_favorite, "[{label}]");
+            assert_eq!(fav_links(&conn), 1, "[{label}] favorite on -> reserved tag linked");
+            update(&conn, "e-ufav", patch(true), 11).unwrap();
+            assert_eq!(fav_links(&conn), 1, "[{label}] repeated on stays one link");
+
+            assert!(!update(&conn, "e-ufav", patch(false), 12).unwrap().unwrap().is_favorite, "[{label}]");
+            assert_eq!(fav_links(&conn), 0, "[{label}] favorite off -> reserved tag unlinked");
+        }
+    }
+
+    #[test]
     fn soft_delete_hides_entry_and_drops_it_from_search() {
         for (label, conn) in both_dbs() {
             let e = create(
@@ -1085,6 +1129,38 @@ mod tests {
             assert_eq!(got.fields[0].name, "Password", "[{label}] the new field was inserted");
             assert!(got.fields.iter().all(|f| f.id != old_field_id), "[{label}] old field id is gone");
             assert_eq!(got.fields[0].sort_order, 0, "[{label}] positional sort_order");
+        }
+    }
+
+    #[test]
+    fn set_fields_bumps_updated_at() {
+        for (label, conn) in both_dbs() {
+            let e = create(
+                &conn,
+                NewEntry { title: "TS".into(), folder_id: None, notes: None, entry_type: "login".into(), fields: vec![] },
+                1000,
+            ).unwrap();
+            set_fields(&conn, &e.id, vec![
+                FieldInput { id: None, template_id: None, name: "Note".into(),
+                             is_protected: false, field_type: "text".into(), value: FieldValue::Set("x".into()) },
+            ], 3000).unwrap();
+            assert_eq!(get(&conn, &e.id).unwrap().unwrap().updated_at, 3000, "[{label}] updated_at bumped");
+        }
+    }
+
+    #[test]
+    fn list_username_picks_first_field_by_sort_order() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "e-uord", "UOrd", 0);
+            for (id, value, order) in [("uord-f2", "second", 1), ("uord-f1", "first", 0)] {
+                conn.execute(
+                    "INSERT INTO entry_fields (id, entry_id, template_id, name, value, is_protected, field_type, sort_order)
+                     VALUES (?1, 'e-uord', 'tpl_username', 'Username', ?2, 0, 'text', ?3)",
+                    rusqlite::params![id, value, order],
+                ).unwrap();
+            }
+            let s = list(&conn, View::All).unwrap().into_iter().find(|e| e.id == "e-uord").unwrap();
+            assert_eq!(s.username.as_deref(), Some("first"), "[{label}] lowest sort_order wins");
         }
     }
 
