@@ -226,6 +226,13 @@ pub enum KdfConfigError {
 
     #[error(transparent)]
     VariantDictionary(#[from] VariantDictionaryError),
+
+    /// Kokos patch: the header's KDF parameters (Argon2 memory/iterations/
+    /// lanes or AES rounds) exceed sane bounds. The header is unauthenticated
+    /// and the transform runs before the HMAC check, so a hostile file could
+    /// otherwise abort the process on allocation or hang it.
+    #[error("KDF cost exceeds supported bounds")]
+    KdfCostTooHigh,
 }
 
 /// Errors while performing cryptographic operations

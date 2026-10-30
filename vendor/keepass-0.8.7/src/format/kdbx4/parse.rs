@@ -187,7 +187,9 @@ fn parse_outer_header(data: &[u8]) -> Result<(KDBX4OuterHeader, usize), Database
 
             HEADER_KDF_PARAMS => {
                 let vd = VariantDictionary::parse(entry_buffer)?;
-                let (kconf, kseed) = vd.try_into()?;
+                let (kconf, kseed): (KdfConfig, Vec<u8>) = vd.try_into()?;
+                // Kokos patch: reject hostile KDF cost before any key transform.
+                kconf.check_cost()?;
                 kdf_config = Some(kconf);
                 kdf_seed = Some(kseed)
             }

@@ -7,6 +7,9 @@ use std::io::Read;
 #[cfg(feature = "save_kdbx4")]
 use std::io::Write;
 
+/// Kokos patch: upper bound on decompressed database payload size.
+const MAX_DECOMPRESSED_SIZE: u64 = 1024 * 1024 * 1024;
+
 pub trait Compression {
     #[cfg(feature = "save_kdbx4")]
     fn compress(&self, in_buffer: &[u8]) -> Result<Vec<u8>, std::io::Error>;
@@ -39,8 +42,17 @@ impl Compression for GZipCompression {
     }
     fn decompress(&self, in_buffer: &[u8]) -> Result<Vec<u8>, std::io::Error> {
         let mut res = Vec::new();
-        let mut decoder = GzDecoder::new(in_buffer);
-        decoder.read_to_end(&mut res)?;
+        // Kokos patch: cap inflated output so a gzip bomb fails with an error
+        // instead of exhausting memory and aborting the process.
+        GzDecoder::new(in_buffer)
+            .take(MAX_DECOMPRESSED_SIZE + 1)
+            .read_to_end(&mut res)?;
+        if res.len() as u64 > MAX_DECOMPRESSED_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "decompressed payload exceeds size limit",
+            ));
+        }
         Ok(res)
     }
 }

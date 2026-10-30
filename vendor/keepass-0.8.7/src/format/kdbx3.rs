@@ -140,6 +140,8 @@ fn parse_outer_header(data: &[u8]) -> Result<KDBX3Header, DatabaseOpenError> {
     let kdf_config = KdfConfig::Aes {
         rounds: transform_rounds,
     };
+    // Kokos patch: reject hostile KDF cost before any key transform.
+    kdf_config.check_cost()?;
 
     Ok(KDBX3Header {
         outer_cipher,

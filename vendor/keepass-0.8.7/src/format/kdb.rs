@@ -311,6 +311,8 @@ pub(crate) fn parse_kdb(data: &[u8], db_key: &DatabaseKey) -> Result<Database, D
     let kdf_config = KdfConfig::Aes {
         rounds: header.transform_rounds as u64,
     };
+    // Kokos patch: reject hostile KDF cost before any key transform.
+    kdf_config.check_cost()?;
 
     let transformed_key = kdf_config
         .get_kdf_seeded(&header.transform_seed)

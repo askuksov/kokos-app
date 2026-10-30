@@ -30,6 +30,8 @@ pub struct KdbxEntry {
     pub url: Option<String>,
     pub notes: Option<String>,
     pub totp_raw: Option<String>,
+    /// KeePass field name `totp_raw` came from (e.g. "otp", "TOTP Seed").
+    pub totp_key: Option<String>,
     pub custom: Vec<KdbxField>,
     pub binaries: Vec<KdbxBinary>,
     pub tags: Vec<String>,
@@ -42,7 +44,7 @@ impl std::fmt::Debug for KdbxEntry {
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("url", &self.url)
-            .field("notes", &self.notes)
+            .field("notes", &self.notes.as_ref().map(|_| "<redacted>"))
             .field("totp_raw", &self.totp_raw.as_ref().map(|_| "<redacted>"))
             .field("custom", &self.custom)
             .field("binaries_count", &self.binaries.len())
@@ -94,10 +96,15 @@ pub fn open(bytes: &[u8], password: &str) -> Result<KdbxTree> {
 }
 
 fn map_open_err(e: keepass::error::DatabaseOpenError) -> VaultError {
-    use keepass::error::{DatabaseKeyError, DatabaseOpenError as E};
+    use keepass::error::{
+        DatabaseIntegrityError, DatabaseKeyError, DatabaseOpenError as E, KdfConfigError,
+    };
     match e {
         E::Key(DatabaseKeyError::IncorrectKey) => VaultError::KdbxWrongPassword,
         E::UnsupportedVersion => VaultError::KdbxUnsupported,
+        E::DatabaseIntegrity(DatabaseIntegrityError::KdfSettings(
+            KdfConfigError::KdfCostTooHigh,
+        )) => VaultError::KdbxUnsupported,
         _ => VaultError::KdbxCorrupt,
     }
 }
@@ -130,27 +137,23 @@ fn lower_entry(e: &keepass::db::Entry) -> KdbxEntry {
     let password = field_str(e, "Password");
     let url = field_str(e, "URL");
     let notes = field_str(e, "Notes");
-    let totp_raw = [
+    let (totp_key, totp_raw) = match [
         "otp",
         "TOTP Seed",
         "TimeOtp-Secret-Base32",
         "TimeOtp-Secret",
     ]
     .iter()
-    .find_map(|k| field_str(e, k));
-    const STD: [&str; 8] = [
-        "Title",
-        "UserName",
-        "Password",
-        "URL",
-        "Notes",
-        "otp",
-        "TOTP Seed",
-        "TimeOtp-Secret-Base32",
-    ];
+    .find_map(|k| field_str(e, k).map(|v| (k.to_string(), v)))
+    {
+        Some((k, v)) => (Some(k), Some(v)),
+        None => (None, None),
+    };
+    const STD: [&str; 5] = ["Title", "UserName", "Password", "URL", "Notes"];
     let mut custom = Vec::new();
     for (name, value) in &e.fields {
-        if STD.contains(&name.as_str()) || name == "TimeOtp-Secret" {
+        // Only the picked seed key is consumed; other seed keys stay custom.
+        if STD.contains(&name.as_str()) || totp_key.as_deref() == Some(name.as_str()) {
             continue;
         }
         if let Some(v) = value_str(value) {
@@ -161,6 +164,8 @@ fn lower_entry(e: &keepass::db::Entry) -> KdbxEntry {
             });
         }
     }
+    // `fields` is a HashMap: sort so custom field order is stable per import.
+    custom.sort_by(|a, b| a.name.cmp(&b.name));
     let tags = e
         .tags
         .iter()
@@ -174,6 +179,7 @@ fn lower_entry(e: &keepass::db::Entry) -> KdbxEntry {
         url,
         notes,
         totp_raw,
+        totp_key,
         custom,
         binaries: lower_binaries(e),
         tags,
@@ -249,7 +255,7 @@ fn import_group(
 
 fn ensure_tag(tx: &Connection, name: &str, rep: &mut ImportReport) -> Result<Option<String>> {
     let name = name.trim();
-    if name.is_empty() || name.eq_ignore_ascii_case(crate::tags::FAVORITE_TAG) {
+    if name.is_empty() || name == crate::tags::FAVORITE_TAG {
         return Ok(None);
     }
     use rusqlite::OptionalExtension;
@@ -327,6 +333,18 @@ fn import_entry(
                 &uri,
                 true,
                 "otp",
+                &mut sort,
+            )?;
+        } else {
+            // Unparseable seed: keep it verbatim rather than drop it.
+            insert_field(
+                tx,
+                &entry_id,
+                None,
+                e.totp_key.as_deref().unwrap_or("TOTP Seed"),
+                raw,
+                true,
+                "secret",
                 &mut sort,
             )?;
         }
@@ -434,6 +452,7 @@ mod tests {
             url: None,
             notes: None,
             totp_raw: None,
+            totp_key: None,
             custom: vec![],
             binaries: vec![],
             tags: vec![],
@@ -665,9 +684,16 @@ mod tests {
     fn import_skips_reserved_favorite_tag() {
         let conn = db::create_fresh().unwrap();
         let mut e = entry("A");
-        e.tags = vec!["favorite".into(), "real".into()];
+        e.tags = vec!["favorite".into(), "Favorite".into(), "real".into()];
         let rep = import(&conn, &one(vec![e], vec![]), 1_000).unwrap();
-        assert_eq!(rep.tags_new, 1);
+        // Only the exact reserved name is skipped; "Favorite" is an ordinary tag.
+        assert_eq!(rep.tags_new, 2);
+        let cap: i64 = conn
+            .query_row("SELECT count(*) FROM tags WHERE name='Favorite'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(cap, 1);
         let real: i64 = conn
             .query_row("SELECT count(*) FROM tags WHERE name='real'", [], |r| {
                 r.get(0)
@@ -680,6 +706,57 @@ mod tests {
             })
             .unwrap();
         assert_eq!(fav, 0);
+    }
+
+    #[test]
+    fn import_keeps_unparseable_totp_seed_as_protected_field() {
+        let conn = db::create_fresh().unwrap();
+        let mut e = entry("MFA");
+        e.totp_raw = Some("!!not-base32!!".into());
+        e.totp_key = Some("TimeOtp-Secret".into());
+        import(&conn, &one(vec![e], vec![]), 1_000).unwrap();
+        let (tpl, ft, prot, val): (Option<String>, String, i64, String) = conn
+            .query_row(
+                "SELECT template_id, field_type, is_protected, value FROM entry_fields
+                 WHERE name='TimeOtp-Secret'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!((tpl, ft.as_str(), prot), (None, "secret", 1));
+        assert_eq!(val, "!!not-base32!!");
+        let otp: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM entry_fields WHERE name='TOTP'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(otp, 0);
+    }
+
+    #[test]
+    fn lower_entry_consumes_only_picked_seed_and_sorts_custom() {
+        use keepass::db::{Entry, Value};
+        let mut e = Entry::new();
+        e.fields
+            .insert("Title".into(), Value::Unprotected("T".into()));
+        e.fields
+            .insert("otp".into(), Value::Unprotected("JBSWY3DPEHPK3PXP".into()));
+        e.fields.insert(
+            "TOTP Seed".into(),
+            Value::Protected("OTHERSEED".as_bytes().into()),
+        );
+        for n in ["zeta", "alpha", "mid"] {
+            e.fields.insert(n.into(), Value::Unprotected("v".into()));
+        }
+        let low = lower_entry(&e);
+        assert_eq!(low.totp_key.as_deref(), Some("otp"));
+        assert_eq!(low.totp_raw.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+        let names: Vec<&str> = low.custom.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["TOTP Seed", "alpha", "mid", "zeta"]);
+        let seed = low.custom.iter().find(|c| c.name == "TOTP Seed").unwrap();
+        assert!(seed.protected, "a secondary seed key keeps its protection");
     }
 
     #[test]
@@ -822,6 +899,46 @@ mod tests {
             matches!(open(&deep, "pw"), Err(VaultError::KdbxCorrupt)),
             "deep <Group> nesting must fail closed as KdbxCorrupt, not abort"
         );
+    }
+
+    fn mk_kdbx_argon2(iterations: Option<u64>, parallelism: Option<u32>) -> Vec<u8> {
+        use keepass::config::{DatabaseConfig, KdfConfig};
+        use keepass::{Database, DatabaseKey};
+        let mut cfg = DatabaseConfig::default();
+        if let KdfConfig::Argon2 {
+            iterations: it,
+            parallelism: p,
+            ..
+        } = &mut cfg.kdf_config
+        {
+            if let Some(v) = iterations {
+                *it = v;
+            }
+            if let Some(v) = parallelism {
+                *p = v;
+            }
+        } else {
+            panic!("default KDF is expected to be Argon2");
+        }
+        let db = Database::new(cfg);
+        let mut out = Vec::new();
+        db.save(&mut out, DatabaseKey::new().with_password("pw"))
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn open_hostile_kdf_cost_is_unsupported() {
+        let many_iters = mk_kdbx_argon2(Some(101), None);
+        assert!(matches!(
+            open(&many_iters, "pw"),
+            Err(VaultError::KdbxUnsupported)
+        ));
+        let many_lanes = mk_kdbx_argon2(None, Some(65));
+        assert!(matches!(
+            open(&many_lanes, "pw"),
+            Err(VaultError::KdbxUnsupported)
+        ));
     }
 
     #[test]
@@ -1000,6 +1117,7 @@ mod tests {
     fn debug_never_prints_secrets() {
         let mut e = entry("Bank");
         e.password = Some("s3cr3t".into());
+        e.notes = Some("pin is 4321".into());
         e.totp_raw = Some("JBSWY3DPEHPK3PXP".into());
         e.custom = vec![KdbxField {
             name: "Backup Code".into(),
@@ -1014,6 +1132,10 @@ mod tests {
         assert!(
             !dbg.contains("JBSWY3DPEHPK3PXP"),
             "totp seed must never appear in Debug: {dbg}"
+        );
+        assert!(
+            !dbg.contains("4321"),
+            "notes must never appear in Debug: {dbg}"
         );
         assert!(
             !dbg.contains("topsecretvalue"),
