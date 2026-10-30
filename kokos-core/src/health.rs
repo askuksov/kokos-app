@@ -49,7 +49,7 @@ pub fn scan(conn: &Connection) -> Result<HealthReport> {
          WHERE e.is_deleted = 0
            AND ef.field_type = 'secret'
            AND (ef.template_id IS NULL OR ef.template_id NOT IN ('tpl_pin', 'tpl_security_answer'))
-         ORDER BY e.title COLLATE NOCASE ASC, ef.sort_order ASC",
+         ORDER BY e.title COLLATE NOCASE ASC, e.id ASC, ef.sort_order ASC, ef.id ASC",
     )?;
 
     let mut weak: Vec<WeakField> = Vec::new();
