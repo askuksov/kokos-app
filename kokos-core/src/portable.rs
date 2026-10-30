@@ -65,11 +65,17 @@ pub struct ExportEntry {
     pub title: String,
     pub notes: Option<String>,
     pub is_favorite: bool,
+    /// Absent in bundles written before entry types existed.
+    #[serde(default = "default_entry_type")]
+    pub entry_type: String,
     pub created_at: i64,
     pub updated_at: i64,
     pub fields: Vec<ExportField>,
     pub tags: Vec<String>,
     pub history: Vec<ExportHistory>,
+}
+fn default_entry_type() -> String {
+    "login".into()
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportField {
@@ -174,7 +180,7 @@ pub fn export(
     let mut entries = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT id, folder_id, title, notes, is_favorite, created_at, updated_at FROM entries WHERE is_deleted = 0 ORDER BY created_at")?;
+            "SELECT id, folder_id, title, notes, is_favorite, created_at, updated_at, entry_type FROM entries WHERE is_deleted = 0 ORDER BY created_at")?;
         let raw = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -184,10 +190,12 @@ pub fn export(
                 r.get::<_, i64>(4)? != 0,
                 r.get::<_, i64>(5)?,
                 r.get::<_, i64>(6)?,
+                r.get::<_, String>(7)?,
             ))
         })?;
         for row in raw {
-            let (id, folder_id, title, notes, is_favorite, created_at, updated_at) = row?;
+            let (id, folder_id, title, notes, is_favorite, created_at, updated_at, entry_type) =
+                row?;
             if let Some(f) = &id_filter {
                 if !f.contains(id.as_str()) {
                     continue;
@@ -202,6 +210,7 @@ pub fn export(
                 title,
                 notes,
                 is_favorite,
+                entry_type,
                 created_at,
                 updated_at,
                 fields,
@@ -343,6 +352,33 @@ pub(crate) fn find_folder_by_name(
         .optional()?)
 }
 
+/// Deepest folder level an import nests into (top-level folders are depth 1);
+/// deeper bundle folders become children of their ancestor at this depth.
+const MAX_FOLDER_DEPTH: usize = 200;
+
+/// Reuse a same-named sibling or create the folder; a newly created folder
+/// takes the bundle's `sort_order`.
+fn import_folder(
+    tx: &Connection,
+    f: &ExportFolder,
+    parent: Option<&str>,
+    now: i64,
+    rep: &mut ImportReport,
+) -> Result<String> {
+    if let Some(id) = find_folder_by_name(tx, parent, &f.name)? {
+        return Ok(id);
+    }
+    let fol = crate::folders::create(tx, &f.name, parent, now)?;
+    rep.folders_new += 1;
+    if f.sort_order != 0 {
+        tx.execute(
+            "UPDATE folders SET sort_order = ?1 WHERE id = ?2",
+            rusqlite::params![f.sort_order, fol.id],
+        )?;
+    }
+    Ok(fol.id)
+}
+
 /// Additive merge into the OPEN vault. One outer transaction; entries/fields/
 /// tag-links/history/relations are raw INSERTs (new ids, preserved timestamps,
 /// no nested tx); folders/tags/templates reuse the plain-execute create fns.
@@ -352,61 +388,53 @@ pub fn import(conn: &Connection, b: &ExportBundle, now: i64) -> Result<ImportRep
     let tx = conn.unchecked_transaction()?;
 
     let mut folder_map: HashMap<String, String> = HashMap::new();
+    // Bundle id -> (depth below root, new parent id); top-level folders are depth 1.
+    let mut folder_pos: HashMap<String, (usize, String)> = HashMap::new();
     let mut remaining: Vec<ExportFolder> = b.data.folders.clone();
     let mut guard = remaining.len() + 1;
     while !remaining.is_empty() && guard > 0 {
         guard -= 1;
         let mut next = Vec::new();
         for f in remaining.into_iter() {
-            let new_id = if f.id == "root" {
-                match find_folder_by_name(&tx, None, &f.name)? {
-                    Some(id) => id,
-                    None => {
-                        let fol = crate::folders::create(&tx, &f.name, None, now)?;
-                        rep.folders_new += 1;
-                        fol.id
+            if f.id == "root" {
+                let id = import_folder(&tx, &f, None, now, &mut rep)?;
+                folder_pos.insert(f.id.clone(), (0, String::new()));
+                folder_map.insert(f.id.clone(), id);
+                continue;
+            }
+            let (parent_new, depth) = match f.parent_id.as_deref() {
+                None | Some("root") => ("root".to_string(), 1),
+                Some(p) => match (folder_map.get(p), folder_pos.get(p)) {
+                    // A crafted chain deeper than the cap would later overflow
+                    // the stack in recursive tree building, so anything below
+                    // the cap is attached to the ancestor at the cap instead.
+                    (Some(_), Some((d, pp))) if *d > MAX_FOLDER_DEPTH => (pp.clone(), *d),
+                    (Some(np), Some((d, _))) => (np.clone(), d + 1),
+                    _ => {
+                        next.push(f);
+                        continue;
                     }
-                }
-            } else {
-                let parent_new: Option<&str> = match f.parent_id.as_deref() {
-                    None => Some("root"),
-                    Some("root") => Some("root"),
-                    Some(p) => match folder_map.get(p) {
-                        Some(np) => Some(np.as_str()),
-                        None => {
-                            next.push(f);
-                            continue;
-                        }
-                    },
-                };
-                match find_folder_by_name(&tx, parent_new, &f.name)? {
-                    Some(id) => id,
-                    None => {
-                        let fol = crate::folders::create(&tx, &f.name, parent_new, now)?;
-                        rep.folders_new += 1;
-                        fol.id
-                    }
-                }
+                },
             };
-            folder_map.insert(f.id.clone(), new_id);
+            let id = import_folder(&tx, &f, Some(&parent_new), now, &mut rep)?;
+            folder_pos.insert(f.id.clone(), (depth, parent_new));
+            folder_map.insert(f.id.clone(), id);
         }
         remaining = next;
     }
     for f in remaining {
-        let new_id = match find_folder_by_name(&tx, Some("root"), &f.name)? {
-            Some(id) => id,
-            None => {
-                let fol = crate::folders::create(&tx, &f.name, Some("root"), now)?;
-                rep.folders_new += 1;
-                fol.id
-            }
-        };
+        let new_id = import_folder(&tx, &f, Some("root"), now, &mut rep)?;
         folder_map.insert(f.id, new_id);
     }
 
     let mut tag_map: HashMap<String, String> = HashMap::new();
     for t in &b.data.tags {
         use rusqlite::OptionalExtension;
+        // Favourites are restored from `is_favorite`; never map onto the
+        // reserved tag by name.
+        if t.name == crate::tags::FAVORITE_TAG {
+            continue;
+        }
         let existing: Option<String> = tx
             .query_row("SELECT id FROM tags WHERE name = ?1", [&t.name], |r| {
                 r.get(0)
@@ -415,7 +443,9 @@ pub fn import(conn: &Connection, b: &ExportBundle, now: i64) -> Result<ImportRep
         let id = match existing {
             Some(id) => id,
             None => {
-                let created = crate::tags::create(&tx, &t.name, t.color.as_deref())?;
+                // An invalid colour must not abort the whole import.
+                let color = t.color.as_deref().filter(|c| crate::tags::is_valid_color(c));
+                let created = crate::tags::create(&tx, &t.name, color)?;
                 rep.tags_new += 1;
                 created.id
             }
@@ -458,10 +488,15 @@ pub fn import(conn: &Connection, b: &ExportBundle, now: i64) -> Result<ImportRep
             Some("root") => Some("root".to_string()),
             Some(f) => folder_map.get(f).cloned().or(Some("root".to_string())),
         };
+        let entry_type = if crate::entries::is_valid_entry_type(&e.entry_type) {
+            e.entry_type.as_str()
+        } else {
+            "login"
+        };
         tx.execute(
-            "INSERT INTO entries (id, folder_id, title, notes, is_favorite, is_deleted, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
-            rusqlite::params![new_entry, folder_new, e.title, e.notes, e.is_favorite as i64, e.created_at, e.updated_at],
+            "INSERT INTO entries (id, folder_id, title, notes, is_favorite, is_deleted, created_at, updated_at, entry_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8)",
+            rusqlite::params![new_entry, folder_new, e.title, e.notes, e.is_favorite as i64, e.created_at, e.updated_at, entry_type],
         )?;
         for f in &e.fields {
             let template_id: Option<String> = match f.template_id.as_deref() {
@@ -507,6 +542,12 @@ pub fn import(conn: &Connection, b: &ExportBundle, now: i64) -> Result<ImportRep
     }
 
     for r in &b.data.relations {
+        if r.source_id == r.target_id
+            || !crate::relations::RELATION_TYPES.contains(&r.relation_type.as_str())
+        {
+            rep.skipped_relations += 1;
+            continue;
+        }
         match (entry_map.get(&r.source_id), entry_map.get(&r.target_id)) {
             (Some(s), Some(t)) => {
                 let n = tx.execute(
@@ -824,6 +865,7 @@ mod tests {
                     title: "Legacy".into(),
                     notes: None,
                     is_favorite: false,
+                    entry_type: "login".into(),
                     created_at: 1,
                     updated_at: 1,
                     fields: vec![ExportField {
@@ -871,6 +913,7 @@ mod tests {
                     title: "Contact".into(),
                     notes: None,
                     is_favorite: false,
+                    entry_type: "login".into(),
                     created_at: 1,
                     updated_at: 1,
                     fields: vec![ExportField {
@@ -924,6 +967,7 @@ mod tests {
                     title: "Untouched".into(),
                     notes: None,
                     is_favorite: false,
+                    entry_type: "login".into(),
                     created_at: 1,
                     updated_at: 1,
                     fields: vec![],
@@ -1107,5 +1151,189 @@ mod tests {
         assert!(tag_names.contains(&"usedtag") && tag_names.contains(&"unusedtag"));
         let tpl_names: Vec<&str> = b.data.templates.iter().map(|t| t.name.as_str()).collect();
         assert!(tpl_names.contains(&"UsedTpl") && tpl_names.contains(&"UnusedTpl"));
+    }
+
+    fn bundle_of(
+        folders: Vec<ExportFolder>,
+        tags: Vec<ExportTag>,
+        entries: Vec<ExportEntry>,
+        relations: Vec<ExportRelation>,
+    ) -> ExportBundle {
+        ExportBundle {
+            format: EXPORT_FORMAT.into(),
+            version: EXPORT_VERSION,
+            exported_at: 1,
+            app_version: "0.1.0".into(),
+            fidelity: FIDELITY.into(),
+            data: ExportData {
+                folders,
+                tags,
+                templates: vec![],
+                entries,
+                relations,
+            },
+        }
+    }
+
+    fn bare_entry(id: &str, tags: Vec<String>) -> ExportEntry {
+        ExportEntry {
+            id: id.into(),
+            folder_id: None,
+            title: id.into(),
+            notes: None,
+            is_favorite: false,
+            entry_type: "login".into(),
+            created_at: 1,
+            updated_at: 1,
+            fields: vec![],
+            tags,
+            history: vec![],
+        }
+    }
+
+    #[test]
+    fn roundtrip_preserves_non_login_entry_type() {
+        let src = db::create_fresh().unwrap();
+        crate::entries::create(
+            &src,
+            crate::entries::NewEntry {
+                title: "Visa".into(),
+                folder_id: None,
+                notes: None,
+                entry_type: "card".into(),
+                fields: vec![],
+            },
+            1,
+        )
+        .unwrap();
+        let json = to_json(&export(&src, None, "0.1.0", 1).unwrap()).unwrap();
+        let bundle = parse(&json).unwrap();
+        assert_eq!(bundle.data.entries[0].entry_type, "card");
+        let dst = db::create_fresh().unwrap();
+        import(&dst, &bundle, 2).unwrap();
+        let t: String = dst
+            .query_row("SELECT entry_type FROM entries WHERE title='Visa'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(t, "card");
+    }
+
+    #[test]
+    fn import_defaults_missing_and_invalid_entry_type_to_login() {
+        let mut bad = bare_entry("bad", vec![]);
+        bad.entry_type = "spaceship".into();
+        let mut json = to_json(&bundle_of(vec![], vec![], vec![bare_entry("old", vec![])], vec![]))
+            .unwrap();
+        json = json.replace("\"entry_type\": \"login\",", "");
+        let old = parse(&json).unwrap();
+        assert_eq!(old.data.entries[0].entry_type, "login");
+        let dst = db::create_fresh().unwrap();
+        import(&dst, &old, 2).unwrap();
+        import(&dst, &bundle_of(vec![], vec![], vec![bad], vec![]), 2).unwrap();
+        let n: i64 = dst
+            .query_row("SELECT count(*) FROM entries WHERE entry_type='login' AND title IN ('old','bad')", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn import_drops_invalid_tag_colour_and_skips_reserved_favorite() {
+        let dst = db::create_fresh().unwrap();
+        let tags = vec![
+            ExportTag { id: "t1".into(), name: "work".into(), color: Some("not-a-colour".into()) },
+            ExportTag { id: "t2".into(), name: crate::tags::FAVORITE_TAG.into(), color: None },
+        ];
+        let e = bare_entry("A", vec!["t1".into(), "t2".into()]);
+        let rep = import(&dst, &bundle_of(vec![], tags, vec![e], vec![]), 2)
+            .expect("a bad tag colour must not abort the import");
+        assert_eq!(rep.tags_new, 1);
+        let color: Option<String> = dst
+            .query_row("SELECT color FROM tags WHERE name='work'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(color, None);
+        let fav_links: i64 = dst
+            .query_row(
+                "SELECT count(*) FROM entry_tags et JOIN tags t ON t.id = et.tag_id WHERE t.name = ?1",
+                [crate::tags::FAVORITE_TAG],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fav_links, 0, "a non-favourite entry must not be favourited via a bundle tag");
+    }
+
+    #[test]
+    fn import_skips_self_and_unknown_type_relations() {
+        let dst = db::create_fresh().unwrap();
+        let rel = |s: &str, t: &str, ty: &str| ExportRelation {
+            source_id: s.into(),
+            target_id: t.into(),
+            relation_type: ty.into(),
+            created_at: 1,
+        };
+        let b = bundle_of(
+            vec![],
+            vec![],
+            vec![bare_entry("a", vec![]), bare_entry("b", vec![])],
+            vec![rel("a", "a", "related"), rel("a", "b", "bogus"), rel("a", "b", "related")],
+        );
+        let rep = import(&dst, &b, 2).unwrap();
+        assert_eq!(rep.relations, 1);
+        assert_eq!(rep.skipped_relations, 2);
+    }
+
+    #[test]
+    fn import_keeps_sort_order_of_created_folders() {
+        let dst = db::create_fresh().unwrap();
+        let folder = |id: &str, name: &str, order: i32| ExportFolder {
+            id: id.into(),
+            parent_id: None,
+            name: name.into(),
+            sort_order: order,
+            created_at: 1,
+            updated_at: 1,
+        };
+        import(&dst, &bundle_of(vec![folder("f1", "Second", 2), folder("f2", "First", 1)], vec![], vec![], vec![]), 2)
+            .unwrap();
+        let order: i32 = dst
+            .query_row("SELECT sort_order FROM folders WHERE name='Second'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(order, 2);
+    }
+
+    #[test]
+    fn import_caps_folder_depth() {
+        let dst = db::create_fresh().unwrap();
+        let n = MAX_FOLDER_DEPTH + 50;
+        let folders: Vec<ExportFolder> = (0..n)
+            .map(|i| ExportFolder {
+                id: format!("f{i}"),
+                parent_id: if i == 0 { None } else { Some(format!("f{}", i - 1)) },
+                name: format!("F{i}"),
+                sort_order: 0,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .collect();
+        let rep = import(&dst, &bundle_of(folders, vec![], vec![], vec![]), 2).unwrap();
+        assert_eq!(rep.folders_new as usize, n, "every folder is still imported");
+        let max_depth: i64 = dst
+            .query_row(
+                "WITH RECURSIVE d(id, depth) AS (
+                     SELECT id, 1 FROM folders WHERE parent_id = 'root'
+                     UNION ALL SELECT f.id, d.depth + 1 FROM folders f JOIN d ON f.parent_id = d.id)
+                 SELECT max(depth) FROM d",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // Overflow folders hang off the ancestor at the cap.
+        assert_eq!(max_depth as usize, MAX_FOLDER_DEPTH + 1);
+        let anchor: String = dst
+            .query_row(
+                "SELECT p.name FROM folders f JOIN folders p ON p.id = f.parent_id WHERE f.name = ?1",
+                [format!("F{}", n - 1)],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(anchor, format!("F{}", MAX_FOLDER_DEPTH - 1));
     }
 }
