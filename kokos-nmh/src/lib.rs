@@ -5,6 +5,8 @@
 
 pub mod framing;
 pub mod protocol;
+pub mod origin;
+pub mod transport;
 
 /// Host build version, reported in `ping` when the app is unreachable.
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");

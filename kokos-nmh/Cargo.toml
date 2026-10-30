@@ -13,3 +13,21 @@ path = "src/lib.rs"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Hand-rolled named-pipe transport (src/transport/named_pipe.rs) — the Windows
+# twin of the unix-socket path. windows-sys rather than a cross-platform IPC
+# wrapper because the properties that make this channel safe (the pipe's DACL,
+# PIPE_REJECT_REMOTE_CLIENTS, the overlapped-I/O timeouts) have to be auditable
+# in our own source, not inherited from a dependency's defaults. Version 0.60
+# is the one already in the lock file via keyring's windows-native backend, so
+# no second windows-sys enters the tree.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_System_IO",
+] }
