@@ -29,13 +29,12 @@ fn inverse(t: &str) -> &str {
     }
 }
 
-/// entry_relations has exactly one UNIQUE constraint (source_id, target_id,
-/// relation_type), so a constraint violation here is always a duplicate:
-/// relation_type is pre-validated (the CHECK can't fire) and callers pass two
-/// existing entry ids (the FK can't fire).
+/// Maps only a UNIQUE violation -- the single (source_id, target_id,
+/// relation_type) constraint -- to `DuplicateRelation`. Every other failure,
+/// including a FOREIGN KEY violation for a missing entry id, passes through.
 fn map_unique(e: rusqlite::Error) -> VaultError {
     if let rusqlite::Error::SqliteFailure(f, _) = &e {
-        if f.code == rusqlite::ErrorCode::ConstraintViolation {
+        if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
             return VaultError::DuplicateRelation;
         }
     }
@@ -48,6 +47,16 @@ pub fn add(conn: &Connection, source_id: &str, target_id: &str, relation_type: &
     }
     if source_id == target_id {
         return Err(VaultError::SelfRelation);
+    }
+    // The inverse row already reads as this relation from both panels.
+    let inverse_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM entry_relations
+                        WHERE source_id = ?1 AND target_id = ?2 AND relation_type = ?3)",
+        rusqlite::params![target_id, source_id, inverse(relation_type)],
+        |r| r.get(0),
+    )?;
+    if inverse_exists {
+        return Err(VaultError::DuplicateRelation);
     }
     let id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -124,6 +133,32 @@ mod tests {
             assert!(matches!(add(&conn, "r-a", "r-b", "banana", 1), Err(VaultError::InvalidRelationType)), "[{label}] bad type");
             add(&conn, "r-a", "r-b", "parent", 1).unwrap();
             assert!(matches!(add(&conn, "r-a", "r-b", "parent", 1), Err(VaultError::DuplicateRelation)), "[{label}] dup");
+        }
+    }
+
+    #[test]
+    fn add_rejects_inverse_of_existing_relation() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "r-i1", "I1", 0);
+            seed_entry(&conn, "r-i2", "I2", 0);
+            add(&conn, "r-i1", "r-i2", "parent", 1).unwrap();
+            assert!(matches!(add(&conn, "r-i2", "r-i1", "child", 1), Err(VaultError::DuplicateRelation)),
+                "[{label}] B->A child mirrors A->B parent");
+            add(&conn, "r-i1", "r-i2", "related", 1).unwrap();
+            assert!(matches!(add(&conn, "r-i2", "r-i1", "related", 1), Err(VaultError::DuplicateRelation)),
+                "[{label}] B->A related mirrors A->B related");
+            add(&conn, "r-i2", "r-i1", "parent", 1).unwrap();
+            assert_eq!(list_for_entry(&conn, "r-i1").unwrap().len(), 3, "[{label}] no doubled rows in the panel");
+        }
+    }
+
+    #[test]
+    fn add_missing_entry_is_not_reported_as_duplicate() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "r-fk", "FK", 0);
+            let res = add(&conn, "r-fk", "ghost", "related", 1);
+            assert!(res.is_err(), "[{label}] FK violation still fails");
+            assert!(!matches!(res, Err(VaultError::DuplicateRelation)), "[{label}] FK violation is not a duplicate");
         }
     }
 
