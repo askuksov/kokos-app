@@ -114,7 +114,7 @@ pub enum VaultError {
     InvalidRelationType,
 
     #[error("invalid search pattern")]
-    InvalidRegex(String),
+    InvalidRegex,
 
     #[error("invalid generator options: {0}")]
     GeneratorOptions(String),

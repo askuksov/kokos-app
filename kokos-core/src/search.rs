@@ -133,7 +133,7 @@ pub fn search_regex(
     let re = RegexBuilder::new(pattern)
         .size_limit(1 << 20)
         .build()
-        .map_err(|e| VaultError::InvalidRegex(e.to_string()))?;
+        .map_err(|_| VaultError::InvalidRegex)?;
     scan(conn, f, |hay| re.is_match(hay))
 }
 
@@ -325,7 +325,7 @@ mod tests {
         };
         assert!(matches!(
             search_regex(&c, "(unclosed", &f),
-            Err(crate::error::VaultError::InvalidRegex(_))
+            Err(crate::error::VaultError::InvalidRegex)
         ));
     }
 
