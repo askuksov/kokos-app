@@ -23,6 +23,9 @@ pub struct LoginMatch {
     pub exact_host: bool,
 }
 
+/// Only `login` entries are autofill candidates: a card, secure note or
+/// Wi-Fi entry may carry a URL field but has no credential to fill.
+///
 /// Only unprotected `url` fields match (`ef.is_protected = 0`): a protected
 /// URL must not anchor an extension request, and the ids returned here become
 /// `ConnScope.candidate_ids`, which `handlers::anchored` trusts for a later
@@ -44,18 +47,21 @@ const SQL: &str = "SELECT e.id, e.title,
     COALESCE(
       (SELECT ef2.value FROM entry_fields ef2
          WHERE ef2.entry_id = e.id AND ef2.template_id = 'tpl_username'
-           AND ef2.is_protected = 0 LIMIT 1),
+           AND ef2.is_protected = 0
+         ORDER BY ef2.sort_order ASC, ef2.id ASC LIMIT 1),
       (SELECT ef2.value FROM entry_fields ef2
          WHERE ef2.entry_id = e.id
            AND (ef2.template_id = 'tpl_email' OR ef2.field_type = 'email')
-           AND ef2.is_protected = 0 LIMIT 1)) AS username,
+           AND ef2.is_protected = 0
+         ORDER BY ef2.sort_order ASC, ef2.id ASC LIMIT 1)) AS username,
     EXISTS(SELECT 1 FROM entry_fields ef3
        WHERE ef3.entry_id = e.id
          AND (ef3.template_id = 'tpl_totp' OR ef3.field_type = 'otp')) AS has_totp,
     ef.value AS url_value
   FROM entries e
   JOIN entry_fields ef ON ef.entry_id = e.id
-  WHERE e.is_deleted = 0 AND ef.field_type = 'url' AND ef.is_protected = 0
+  WHERE e.is_deleted = 0 AND e.entry_type = 'login'
+    AND ef.field_type = 'url' AND ef.is_protected = 0
     AND ef.value IS NOT NULL AND ef.value != ''
   ORDER BY e.title COLLATE NOCASE ASC";
 
@@ -419,6 +425,45 @@ mod tests {
             assert!(
                 !mine.has_totp,
                 "[{label}] no totp field means has_totp must be false"
+            );
+        }
+    }
+
+    #[test]
+    fn non_login_entries_with_a_url_are_not_candidates() {
+        for (label, conn) in both_dbs() {
+            for (i, kind) in ["card", "secure_note", "wifi", "login"].iter().enumerate() {
+                let eid = format!("l-3{i}");
+                seed_entry(&conn, &eid, kind, 0);
+                conn.execute("UPDATE entries SET entry_type = ?1 WHERE id = ?2", rusqlite::params![kind, eid])
+                    .unwrap();
+                seed_field(&conn, &format!("f-5{i}"), &eid, "URL", "https://entry-type-check.example", "url", Some("tpl_url"));
+            }
+
+            let hits = for_url(&conn, "https://entry-type-check.example", 50).unwrap();
+            let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+            assert_eq!(ids, vec!["l-33"], "[{label}] only the login entry may be offered");
+        }
+    }
+
+    #[test]
+    fn username_pick_is_deterministic_by_sort_order() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "l-40", "Two usernames", 0);
+            seed_field(&conn, "f-60", "l-40", "URL", "https://two-usernames.example", "url", Some("tpl_url"));
+            conn.execute(
+                "INSERT INTO entry_fields (id, entry_id, template_id, name, value, is_protected, field_type, sort_order)
+                 VALUES ('f-61', 'l-40', 'tpl_username', 'Username', 'second', 0, 'text', 2),
+                        ('f-62', 'l-40', 'tpl_username', 'Username', 'first', 0, 'text', 1)",
+                [],
+            )
+            .unwrap();
+
+            let hits = for_url(&conn, "https://two-usernames.example", 50).unwrap();
+            assert_eq!(
+                hits.iter().find(|h| h.id == "l-40").and_then(|h| h.username.clone()),
+                Some("first".to_string()),
+                "[{label}] lowest sort_order wins"
             );
         }
     }
