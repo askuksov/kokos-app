@@ -9,16 +9,26 @@ use rand::Rng;
 use crate::error::{Result, VaultError};
 
 /// A random temp path next to `path`, so the final rename stays within one
-/// directory (and one filesystem).
+/// directory (and one filesystem). The name is opaque, not derived from the
+/// target's, so a long vault name cannot push it past the filename limit.
 fn temp_sibling(path: &Path) -> Result<(&Path, PathBuf)> {
     let dir = path.parent().ok_or(VaultError::Io("path has no parent".into()))?;
     let suffix: u64 = rand::thread_rng().gen();
-    let tmp: PathBuf = dir.join(format!(
-        "{}.tmp-{:016x}",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("vault"),
-        suffix
-    ));
+    let tmp: PathBuf = dir.join(format!(".kokos-{:016x}.tmp", suffix));
     Ok((dir, tmp))
+}
+
+/// Creates the temp file. On unix it is owner-only (0600) from the first
+/// byte, so no other local user can open it before `harden_permissions` runs.
+#[cfg(unix)]
+fn create_temp(tmp: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    Ok(std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(tmp)?)
+}
+
+#[cfg(not(unix))]
+fn create_temp(tmp: &Path) -> Result<std::fs::File> {
+    Ok(std::fs::File::create(tmp)?)
 }
 
 /// Best-effort: by now the rename has committed and the new file is what the
@@ -33,7 +43,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let (dir, tmp) = temp_sibling(path)?;
 
     let result: Result<()> = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut f = create_temp(&tmp)?;
         #[cfg(unix)]
         harden_permissions(&f, path)?;
         f.write_all(bytes)?;
@@ -74,10 +84,9 @@ fn rename_replacing(from: &Path, to: &Path) -> Result<()> {
 /// Aligns the temp file's mode with the file it is about to replace, before the
 /// rename, so an atomic save never changes a vault's permissions.
 ///
-/// `File::create` takes its mode from the process umask (commonly 0644 = world
-/// readable), and POSIX `rename` does not carry over the replaced file's mode —
-/// so without this, every save could silently widen the permissions of a file
-/// holding real credentials. If `target` doesn't exist yet (a brand-new vault),
+/// The temp file starts as 0600, and POSIX `rename` does not carry over the
+/// replaced file's mode — so without this, every save would reset the vault's
+/// mode to 0600 instead of keeping it. If `target` doesn't exist yet (a brand-new vault),
 /// fall back to 0600 (owner read/write only): a password vault must not be born
 /// world-readable.
 #[cfg(unix)]
@@ -111,7 +120,7 @@ pub fn backup(path: &Path) -> Result<()> {
 
     let result: Result<()> = (|| {
         let mut src = std::fs::File::open(path)?;
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut f = create_temp(&tmp)?;
         #[cfg(unix)]
         harden_permissions(&f, path)?;
         std::io::copy(&mut src, &mut f)?;
@@ -184,6 +193,29 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("tmp"))
             .collect();
         assert!(leftovers.is_empty(), "temp file left behind: {:?}", leftovers);
+    }
+
+    #[test]
+    fn long_vault_name_saves_and_backs_up() {
+        let dir = tempfile::tempdir().unwrap();
+        // 250 bytes: the `.bak` name still fits, a name-derived temp would not.
+        let p = dir.path().join(format!("{}.vault", "a".repeat(244)));
+        write_atomic(&p, b"long").unwrap();
+        backup(&p).unwrap();
+        assert_eq!(std::fs::read(backup_path(&p)).unwrap(), b"long");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_file_is_owner_only_from_creation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (_, tmp) = temp_sibling(&dir.path().join("a.vault")).unwrap();
+        let _f = create_temp(&tmp).unwrap();
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "temp file must not start world-readable");
+        assert!(create_temp(&tmp).is_err(), "an existing temp path is never reused");
     }
 
     #[test]
