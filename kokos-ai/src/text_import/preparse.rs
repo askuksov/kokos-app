@@ -69,9 +69,10 @@ fn email_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap())
 }
 /// A `key: value` or `key = value` line. Group 1 = key, group 2 = value.
+/// CRLF mode (`R`), so a Windows line ending is not captured into the value.
 fn kv_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*(\p{L}[\w .\-]*?)[ \t]*[:=][ \t]*(\S.*?)[ \t]*$").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?mR)^[ \t]*(\p{L}[\w .\-]*?)[ \t]*[:=][ \t]*(\S.*?)[ \t]*$").unwrap())
 }
 /// Standalone base32 run (>= 16 chars) — a likely TOTP secret. Precise-or-drop.
 fn base32_re() -> &'static Regex {
@@ -376,6 +377,17 @@ mod tests {
         let pass = hints.iter().find(|h| h.field_type == FieldType::Password).unwrap();
         assert_eq!(value_of(text, pass), "hunter2");
         assert!(hints.iter().any(|h| h.field_type == FieldType::Email && value_of(text, h) == "me@x.com"));
+    }
+
+    #[test]
+    fn crlf_values_exclude_the_carriage_return() {
+        let text = "user: bob\r\npass: hunter2\r\n\r\nsite: x.com\r\npw: abc.\r\n";
+        let p = pre_parse(text);
+        let vals: Vec<&str> = p.entries.iter().flat_map(|e| e.fields.iter().map(|f| value_of(text, f))).collect();
+        for v in ["bob", "hunter2", "abc."] {
+            assert!(vals.contains(&v), "{v} missing: {vals:?}");
+        }
+        assert!(vals.iter().all(|v| !v.contains('\r')), "{vals:?}");
     }
 
     #[test]
