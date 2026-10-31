@@ -1,0 +1,18 @@
+.kv-keyfile-row {
+  position: relative;
+  width: 100%;
+}
+.kv-keyfile-row .kv-input {
+  width: 100%;
+  padding: 8px 11px;
+}
+.kv-keyfile-row .kv-keyfile-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+}
+.kv-keyfile-row .kv-keyfile-clear:active {
+  transform: translateY(-50%) scale(0.97);
+}
