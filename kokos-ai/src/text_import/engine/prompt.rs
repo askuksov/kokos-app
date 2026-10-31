@@ -1,0 +1,118 @@
+//! Deterministic prompt builder. Wraps a system instruction (return a JSON array
+//! of entry drafts with VERBATIM field text, copy from the input, never invent) +
+//! a summary of the pre-parser hint field-types + the chunk, per the model's chat
+//! template. Pure — no secret is fabricated; hint field TYPES steer, the values
+//! are already in the chunk.
+
+use std::fmt::Write as _;
+
+use crate::text_import::engine::extractor::FieldHint;
+use crate::text_import::engine::registry::ChatTemplateKind;
+
+const SYSTEM: &str = "You segment a plaintext file into credential entries. \
+Blank lines separate blocks: all fields of one block belong to ONE entry — \
+never split a block into several entries, and never merge separate blocks. \
+Return ONLY a JSON array. Each element: {\"title\": string|null, \"kind\": one of \
+login|apiKey|secureNote|totp|wifi, \"fields\": [{\"fieldType\": one of \
+login|password|url|email|totpSecret|apiKey|securityQuestion|securityAnswer|note|phone, \
+\"verbatimText\": string}]}. Use kind wifi for wireless-network blocks (an \
+ssid or network name with a key or passphrase). Copy every verbatimText EXACTLY \
+from the input — never invent, rewrite, complete, or mask a value. \
+Omit anything you are unsure about.";
+
+pub fn build_prompt(chunk: &str, hints: &[FieldHint], template: ChatTemplateKind) -> String {
+    let mut hint_line = String::new();
+    if !hints.is_empty() {
+        hint_line.push_str("Deterministic pre-parser already flagged these field types: ");
+        for (i, h) in hints.iter().enumerate() {
+            if i > 0 {
+                hint_line.push_str(", ");
+            }
+            let _ = write!(hint_line, "{}", field_type_name(h.field_type));
+        }
+        hint_line.push('.');
+    }
+
+    let user = if hint_line.is_empty() {
+        format!("INPUT:\n{chunk}")
+    } else {
+        format!("{hint_line}\n\nINPUT:\n{chunk}")
+    };
+
+    match template {
+        ChatTemplateKind::ChatMl => format!(
+            "<|im_start|>system\n{SYSTEM}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
+        ),
+        ChatTemplateKind::Llama3 => format!(
+            "<|start_header_id|>system<|end_header_id|>\n{SYSTEM}<|eot_id|>\
+             <|start_header_id|>user<|end_header_id|>\n{user}<|eot_id|>\
+             <|start_header_id|>assistant<|end_header_id|>\n"
+        ),
+        ChatTemplateKind::Plain => format!("{SYSTEM}\n\n{user}\n\nOUTPUT:\n"),
+    }
+}
+
+fn field_type_name(t: crate::text_import::model::FieldType) -> &'static str {
+    use crate::text_import::model::FieldType::*;
+    match t {
+        Login => "login",
+        Password => "password",
+        Url => "url",
+        Email => "email",
+        TotpSecret => "totpSecret",
+        ApiKey => "apiKey",
+        SecurityQuestion => "securityQuestion",
+        SecurityAnswer => "securityAnswer",
+        Note => "note",
+        Phone => "phone",
+        Ssid => "ssid",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text_import::engine::extractor::FieldHint;
+    use crate::text_import::engine::registry::ChatTemplateKind;
+    use crate::text_import::model::FieldType;
+
+    #[test]
+    fn prompt_contains_chunk_hint_types_and_json_instruction() {
+        let hints = vec![FieldHint { field_type: FieldType::Password, text: "hunter2".into() }];
+        let p = build_prompt("site: x.com\npass: hunter2", &hints, ChatTemplateKind::ChatMl);
+        assert!(p.contains("site: x.com"), "includes the chunk");
+        assert!(p.contains("password"), "names the hinted field type");
+        assert!(p.contains("verbatimText") || p.contains("verbatim"), "instructs verbatim output");
+        assert!(p.contains("<|im_start|>"), "ChatML wrapping");
+    }
+
+    #[test]
+    fn plain_template_has_no_chatml_markers() {
+        let p = build_prompt("hello", &[], ChatTemplateKind::Plain);
+        assert!(!p.contains("<|im_start|>"));
+        assert!(p.contains("hello"));
+    }
+
+    #[test]
+    fn system_names_wifi_and_one_entry_per_block() {
+        let p = build_prompt("Home wifi\nkey: abc", &[], ChatTemplateKind::Plain);
+        assert!(p.contains("wifi"), "wifi is an offered kind");
+        assert!(p.contains("ONE entry"), "blocks are never split");
+    }
+
+    /// Bench result: listing ssid among the offered fieldTypes made
+    /// Qwen2.5-1.5B drop every entry title. The model emits ssid unprompted and
+    /// the parser accepts it, so the list stays as it was.
+    #[test]
+    fn system_does_not_offer_ssid_field_type() {
+        let p = build_prompt("Home wifi\nssid: Casa", &[], ChatTemplateKind::Plain);
+        assert!(!p.contains("|ssid"));
+    }
+
+    #[test]
+    fn ssid_hint_is_named_in_the_hint_line() {
+        let hints = vec![FieldHint { field_type: FieldType::Ssid, text: "Casa".into() }];
+        let p = build_prompt("wifi: Casa", &hints, ChatTemplateKind::Plain);
+        assert!(p.contains("flagged these field types: ssid"));
+    }
+}
