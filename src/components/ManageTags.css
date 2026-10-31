@@ -1,0 +1,109 @@
+
+
+.kv-card.is-overflow-visible {
+  overflow: visible;
+}
+
+.kv-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 18px);
+  gap: 6px;
+}
+.kv-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+}
+.kv-swatch:hover {
+  transform: scale(1.18);
+}
+.kv-swatch.is-active {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px currentColor;
+}
+
+.kv-color-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.kv-color-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 0 1px var(--line);
+  transition: transform 0.12s ease;
+}
+.kv-color-btn:hover {
+  transform: scale(1.12);
+}
+.kv-color-pop {
+  position: absolute;
+  right: 0;
+  top: 31px;
+  z-index: 30;
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-pop);
+  padding: 12px;
+  width: max-content;
+  animation: kv-pop-sm 0.16s var(--ease);
+}
+@keyframes kv-pop-sm {
+  from {
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    transform: none;
+  }
+}
+.kv-color-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+.kv-color-custom-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  flex: 1;
+}
+.kv-color-pop input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border: none;
+  padding: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 0 1px var(--line);
+}
+.kv-color-pop input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.kv-color-pop input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+.kv-color-pop input[type="color"].is-active {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--accent);
+}
+.kv-color-pop .kv-input.is-mono {
+  flex: none;
+  width: 84px;
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}

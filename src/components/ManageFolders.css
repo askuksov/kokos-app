@@ -1,0 +1,117 @@
+
+
+.kv-settings {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 30px 40px 40px;
+}
+.kv-settings-inner {
+  max-width: 560px;
+  margin: 0 auto;
+  animation: kv-fade-up 0.35s var(--ease);
+}
+.kv-settings-inner > h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  margin: 6px 2px 4px;
+}
+.kv-settings-sub {
+  color: var(--text-2);
+  font-size: 12.5px;
+  margin: 0 2px 22px;
+}
+@keyframes kv-fade-up {
+  from {
+    transform: translateY(8px);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.kv-settings-back {
+  margin: 2px 2px 14px;
+}
+
+
+.kv-settings .kv-input {
+  flex: 1;
+  padding: 8px 11px;
+}
+.kv-settings .kv-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.kv-settings .kv-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.kv-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  position: relative;
+  transition: background 0.13s ease;
+}
+.kv-manage-row + .kv-manage-row {
+  border-top: 1px solid var(--line);
+}
+
+.kv-manage-row.is-dragging {
+  opacity: 0.35;
+}
+.kv-manage-row.is-drop-inside {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent-glow);
+}
+.kv-manage-row.is-drop-before::after,
+.kv-manage-row.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  z-index: 2;
+}
+.kv-manage-row.is-drop-before::after {
+  top: -1.5px;
+}
+.kv-manage-row.is-drop-after::after {
+  bottom: -1.5px;
+}
+
+.kv-grip {
+  color: var(--text-3);
+  cursor: grab;
+  flex-shrink: 0;
+  width: 21px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  transition: color 0.13s ease, background 0.13s ease;
+}
+.kv-grip:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+.kv-grip:active {
+  cursor: grabbing;
+}
+.kv-grip-spacer {
+  width: 21px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.kv-delete-spacer {
+  width: 27px;
+  flex-shrink: 0;
+}

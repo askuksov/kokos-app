@@ -1,0 +1,40 @@
+
+.kv-trash-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.kv-trash-toolbar .kv-settings-sub {
+  flex: 1;
+  min-width: 0;
+}
+.kv-trash-toolbar .kv-btn {
+  flex-shrink: 0;
+}
+
+.kv-trash-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kv-trash-title {
+  font-weight: 550;
+  font-size: 13.5px;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kv-trash-row .kv-btn {
+  flex-shrink: 0;
+}
+
+.kv-trash-empty {
+  padding: 34px 20px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
