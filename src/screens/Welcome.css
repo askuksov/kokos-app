@@ -1,0 +1,292 @@
+
+.kv-onboard {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-1);
+}
+.kv-onboard-bar {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  -webkit-app-region: drag;
+}
+.kv-onboard-body {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 20px 0 72px;
+}
+.kv-onboard-glow {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  width: 520px;
+  height: 520px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 62%);
+  opacity: 0.55;
+  filter: blur(20px);
+  pointer-events: none;
+}
+
+.kv-onboard-card {
+  position: relative;
+  z-index: 1;
+  width: 380px;
+  max-width: 88%;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: kv-onboard-in 0.5s var(--ease) both;
+}
+@keyframes kv-onboard-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.kv-logomark {
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+}
+
+.kv-logomark-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.kv-onboard-card > :not(.kv-recent-list) {
+  flex-shrink: 0;
+}
+.kv-recent-list {
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.kv-onboard-head {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kv-onboard-head h1 {
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: -0.025em;
+  color: var(--text-1);
+}
+.kv-onboard-tag {
+  font-size: 13.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+.kv-onboard-hint {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.kv-onboard-actions {
+  margin-top: 28px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kv-recent-vault {
+  margin-top: 16px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-align: left;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raise);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+  color: var(--text-2);
+  transition: box-shadow 0.15s var(--ease), background 0.15s var(--ease);
+  border: none;
+  font: inherit;
+}
+.kv-recent-vault:hover {
+  box-shadow: inset 0 0 0 1px var(--accent-glow);
+  background: var(--bg-input);
+}
+.kv-recent-vault:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.kv-recent-ico {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.kv-recent-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.kv-recent-name {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-1);
+}
+.kv-recent-path {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kv-recent-go {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.kv-onboard-foot {
+  position: absolute;
+  bottom: 24px;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.kv-onboard-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.kv-onboard-foot .dot {
+  color: var(--line-strong);
+}
+
+.kv-onboard-field {
+  margin-top: 12px;
+  width: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: box-shadow 0.15s var(--ease);
+}
+.kv-onboard-field:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-glow);
+}
+.kv-onboard-field.has-error {
+  box-shadow: inset 0 0 0 1px var(--danger), 0 0 0 3px color-mix(in oklch, var(--danger) 22%, transparent);
+}
+.kv-onboard-field-ico {
+  position: absolute;
+  left: 13px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.kv-onboard-field .kv-input {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 12px 8px 12px 38px;
+  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+}
+.kv-onboard-field .kv-input:focus {
+  box-shadow: none;
+  background: transparent;
+}
+.kv-onboard-field .kv-btn.is-icon {
+  margin-right: 0;
+}
+.kv-onboard-field .kv-password-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kv-onboard-error {
+  margin-top: 10px;
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--danger);
+  animation: kv-fade 0.2s ease;
+}
+@keyframes kv-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.kv-onboard-links {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.kv-onboard-links .dot {
+  color: var(--line-strong);
+  font-size: 12px;
+}
+.kv-linkbtn {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 2px 2px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  transition: color 0.15s var(--ease);
+}
+.kv-linkbtn:hover {
+  color: var(--accent);
+}
+.kv-linkbtn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
