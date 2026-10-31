@@ -2,6 +2,7 @@ import { VaultProvider } from "./state/VaultContext";
 import { SettingsProvider } from "./state/SettingsContext";
 import { LangProvider } from "./state/LangContext";
 import { ClipboardProvider } from "./state/ClipboardContext";
+import { TextImportProvider } from "./state/TextImportContext";
 import { TabsProvider, useTabs } from "./state/TabsContext";
 import { WelcomeScreen } from "./screens/Welcome";
 import { TabLock } from "./screens/TabLock";
@@ -18,7 +19,9 @@ function TabsBody() {
     <div className="kv-body">
       {openTabs.map((tab) => (
         <VaultProvider key={tab.vaultId} vaultId={tab.vaultId}>
-          {!adding && activeTab?.vaultId === tab.vaultId ? <VaultScreen /> : null}
+          <TextImportProvider>
+            {!adding && activeTab?.vaultId === tab.vaultId ? <VaultScreen /> : null}
+          </TextImportProvider>
         </VaultProvider>
       ))}
       {!adding && activeTab?.locked && (

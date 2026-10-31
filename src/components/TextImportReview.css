@@ -1,0 +1,396 @@
+.kv-textimport-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+/* Inline panel variant: the review takes over the main panel instead of
+ * floating above it. Same inner layout, full height, no overlay chrome. */
+.kv-textimport-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kv-textimport.is-panel {
+  width: 100%;
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  border-left: 1px solid var(--line);
+}
+.kv-textimport {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: 100%;
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-pop);
+  overflow: visible;
+}
+.kv-textimport-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.kv-textimport-head h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.kv-textimport-count {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.kv-textimport-head .kv-foldercombo {
+  margin-left: auto;
+  min-width: 200px;
+}
+.kv-textimport-x {
+  flex-shrink: 0;
+}
+.kv-textimport-body {
+  flex: 1;
+  /* A column-flex item defaults to min-height:auto and never shrinks below its
+   * content, so without this the body grows instead of scrolling and the
+   * overflow:hidden ancestors clip it together with the footer. */
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kv-textimport-loading,
+.kv-textimport-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-3);
+}
+.kv-textimport-progress {
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 6px;
+}
+.kv-textimport-bar {
+  display: block;
+  width: min(360px, 100%);
+  height: 6px;
+  margin: 6px auto;
+  appearance: none;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+.kv-textimport-bar::-webkit-progress-bar {
+  background: var(--line);
+}
+.kv-textimport-bar::-webkit-progress-value {
+  background: var(--accent, var(--text-1));
+  transition: width 0.3s ease;
+}
+.kv-textimport-bar:indeterminate::-webkit-progress-value {
+  width: 30%;
+  animation: kv-textimport-slide 1.4s ease-in-out infinite alternate;
+}
+@keyframes kv-textimport-slide {
+  from { margin-left: 0; }
+  to { margin-left: 70%; }
+}
+.kv-textimport-bar.is-file {
+  height: 4px;
+  opacity: 0.8;
+}
+.kv-textimport-eta,
+.kv-textimport-file {
+  font-size: 12px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kv-textimport-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-raise);
+}
+.kv-textimport-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 6px;
+}
+.kv-textimport-title {
+  flex: 1;
+  min-width: 0;
+}
+.kv-textimport-card-head .kv-typeselect {
+  width: 150px;
+  flex-shrink: 0;
+}
+.kv-textimport-card-head .kv-foldercombo {
+  width: 150px;
+  flex-shrink: 0;
+}
+.kv-textimport-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+.kv-textimport-field.is-low {
+  background: color-mix(in oklch, var(--warn) 12%, transparent);
+}
+.kv-textimport-prov {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-bottom: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.kv-textimport-prov-folder {
+  flex-shrink: 0;
+  max-width: 45%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kv-textimport-prov-sep {
+  flex-shrink: 0;
+}
+.kv-textimport-prov-file {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kv-textimport-addfield {
+  align-self: flex-start;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.kv-textimport-addfield:hover {
+  color: var(--text-1);
+}
+.kv-textimport-unparsed {
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kv-textimport-unparsed-head {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-1);
+}
+.kv-textimport-raw {
+  font-size: 12px;
+}
+.kv-textimport-raw > summary {
+  cursor: pointer;
+  padding: 2px 6px;
+  color: var(--text-3);
+  user-select: none;
+}
+.kv-textimport-raw > summary:hover {
+  color: var(--text-1);
+}
+.kv-textimport-raw-body {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.kv-textimport-lock {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+}
+.kv-textimport-field-name-input {
+  width: 118px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.kv-textimport-ft {
+  width: 96px;
+  flex-shrink: 0;
+}
+.kv-fieldtypeselect-pop {
+  right: auto;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.kv-textimport-value {
+  flex: 1;
+  min-width: 0;
+}
+.kv-textimport-low {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+.kv-textimport-discard {
+  flex-shrink: 0;
+  padding: 4px 6px;
+}
+.kv-textimport-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+}
+.kv-textimport-foot .kv-settings-warn {
+  margin-right: auto;
+}
+.kv-foldercombo {
+  position: relative;
+}
+.kv-foldercombo-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  text-align: left;
+}
+.kv-foldercombo-current {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kv-foldercombo-caret {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.kv-foldercombo-pop {
+  z-index: 30;
+  background: var(--bg-panel);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-pop);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kv-foldercombo-search {
+  width: 100%;
+}
+.kv-foldercombo-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kv-foldercombo-opt {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-1);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.kv-foldercombo-opt:hover,
+.kv-foldercombo-opt:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+.kv-foldercombo-create {
+  color: var(--accent);
+  font-weight: 600;
+}
+.kv-foldercombo-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.kv-import-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(90vw, 460px);
+  padding: 10px 12px 10px 16px;
+  border-radius: 10px;
+  background: var(--bg-raise);
+  color: var(--text-1);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+}
+.kv-import-toast-msg { font-size: 13px; }
+.kv-import-toast-x { padding: 2px 6px; }
+
+.kv-textimport-pill {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  padding: 9px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--bg-raise);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+  cursor: pointer;
+}
+.kv-textimport-pill:hover { filter: brightness(1.08); }
+
+.kv-textimport-min { font-size: 18px; line-height: 1; padding: 0 8px; }
+
+.kv-textimport .kv-btn[data-confirming="true"] {
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.kv-textimport .kv-input {
+  padding: 8px 11px;
+}
+.kv-textimport .kv-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.kv-textimport .kv-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
