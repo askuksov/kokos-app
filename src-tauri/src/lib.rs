@@ -2,8 +2,10 @@
 
 mod auth_failures;
 mod autolock;
+mod biometric_macos;
 mod device;
 mod icloud_macos;
+mod keyring_store;
 mod paths;
 mod settings;
 pub mod session_registry;
