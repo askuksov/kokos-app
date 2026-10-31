@@ -1,0 +1,20 @@
+{{!--
+  Triple braces are deliberate: the output is a Markdown file (THIRD-PARTY-NOTICES.md),
+  not HTML, and the app never renders it. Escaping would turn "<", ">" and "&" in
+  licence text into HTML entities and corrupt it.
+--}}
+## Rust dependencies
+
+{{#each licenses}}
+### {{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+```
+{{{text}}}
+```
+
+{{/each}}

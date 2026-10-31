@@ -32,6 +32,9 @@
     "publisher": "Oleksandr Kuksov",
     "license": "MIT",
     "licenseFile": "../LICENSE",
+    "resources": {
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+    },
     "linux": {
       "appimage": {
         "files": {
