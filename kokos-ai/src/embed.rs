@@ -41,6 +41,47 @@ pub fn l2_normalize(v: &mut [f32]) {
     }
 }
 
+/// Turn a model output into one sentence vector of length `dim` (not yet
+/// normalized). The output rank decides the path: `[1, seq, hidden]` is
+/// per-token hidden states and is pooled; `[1, dim]` is already pooled. Any
+/// other shape, or a result whose length is not the registry `dim`, is an error
+/// rather than a silently wrong vector that search would skip.
+pub fn pool_output(
+    dims: &[i64],
+    data: Vec<f32>,
+    mask: &[i64],
+    pooling: Pooling,
+    dim: usize,
+) -> Result<Vec<f32>, AiError> {
+    let seq = mask.len();
+    let pooled = match dims {
+        [1, s, h] if *s as usize == seq && *h > 0 && data.len() == seq * (*h as usize) => {
+            let h = *h as usize;
+            match pooling {
+                Pooling::Cls => data[0..h].to_vec(),
+                Pooling::Mean => {
+                    let hidden: Vec<Vec<f32>> =
+                        (0..seq).map(|t| data[t * h..(t + 1) * h].to_vec()).collect();
+                    mean_pool(&hidden, mask)
+                }
+            }
+        }
+        [1, n] if *n as usize == data.len() => data,
+        other => {
+            return Err(AiError::Backend(format!(
+                "unexpected embedding output shape {other:?} for {seq} tokens"
+            )))
+        }
+    };
+    if pooled.len() != dim {
+        return Err(AiError::Backend(format!(
+            "embedding has {} dimensions, expected {dim}",
+            pooled.len()
+        )));
+    }
+    Ok(pooled)
+}
+
 /// Deterministic stand-in: a stable per-dimension hash of the text, L2-
 /// normalized. Reused by tests so the whole pipeline is testable with no
 /// ONNX. NOT a real semantic model.
@@ -81,8 +122,9 @@ use crate::registry::{ModelDef, Pooling};
 /// type. The session is behind a `Mutex` because `Session::run` needs
 /// `&mut self` while the `Embedder` trait exposes `&self`. Adaptive to the
 /// model's declared I/O: feeds `token_type_ids` only when the graph asks for it
-/// (xlm-roberta e5/bge-m3 don't; BERT-family MiniLM does), and derives the
-/// hidden size from the output so a wrong registry `dim` can't corrupt pooling.
+/// (xlm-roberta e5/bge-m3 don't; BERT-family MiniLM does), and reads the
+/// hidden size from the output shape; a vector whose length is not the
+/// registry `dim` is an error.
 pub struct OrtEmbedder {
     session: Mutex<Session>,
     tokenizer: Tokenizer,
@@ -178,28 +220,16 @@ impl Embedder for OrtEmbedder {
             ));
         }
 
-        let data: Vec<f32> = {
+        let (dims, data): (Vec<i64>, Vec<f32>) = {
             let mut sess = self.session.lock().map_err(|e| AiError::Backend(e.to_string()))?;
             let outputs = sess.run(inputs).map_err(|e| AiError::Backend(e.to_string()))?;
-            let (_shape, slice) = outputs[self.output_name.as_str()]
+            let (shape, slice) = outputs[self.output_name.as_str()]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| AiError::Backend(e.to_string()))?;
-            slice.to_vec()
+            (shape.to_vec(), slice.to_vec())
         };
 
-        let mut pooled = if data.len() % seq == 0 && data.len() / seq >= 16 {
-            let h = data.len() / seq;
-            match self.pooling {
-                Pooling::Cls => data[0..h].to_vec(),
-                Pooling::Mean => {
-                    let hidden: Vec<Vec<f32>> =
-                        (0..seq).map(|t| data[t * h..(t + 1) * h].to_vec()).collect();
-                    mean_pool(&hidden, &mask)
-                }
-            }
-        } else {
-            data
-        };
+        let mut pooled = pool_output(&dims, data, &mask, self.pooling, self.dim)?;
         l2_normalize(&mut pooled);
         Ok(pooled)
     }
@@ -246,6 +276,30 @@ mod tests {
         let mut v = vec![0.0f32, 0.0];
         l2_normalize(&mut v);
         assert_eq!(v, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn pool_output_pools_token_states_by_rank() {
+        let data = vec![1.0, 1.0, 3.0, 3.0, 100.0, 100.0];
+        let mask = [1i64, 1, 0];
+        assert_eq!(pool_output(&[1, 3, 2], data.clone(), &mask, Pooling::Mean, 2).unwrap(), vec![2.0, 2.0]);
+        assert_eq!(pool_output(&[1, 3, 2], data, &mask, Pooling::Cls, 2).unwrap(), vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn pool_output_keeps_an_already_pooled_vector() {
+        // 16 values over 4 tokens would divide evenly; rank 2 must still win.
+        let data: Vec<f32> = (0..16).map(|i| i as f32).collect();
+        let mask = [1i64; 4];
+        assert_eq!(pool_output(&[1, 16], data.clone(), &mask, Pooling::Mean, 16).unwrap(), data);
+    }
+
+    #[test]
+    fn pool_output_rejects_wrong_dim_or_shape() {
+        let mask = [1i64; 2];
+        assert!(pool_output(&[1, 4], vec![0.0; 4], &mask, Pooling::Mean, 8).is_err(), "dim mismatch");
+        assert!(pool_output(&[1, 3, 4], vec![0.0; 12], &mask, Pooling::Mean, 4).is_err(), "seq mismatch");
+        assert!(pool_output(&[2, 2, 4], vec![0.0; 16], &mask, Pooling::Mean, 4).is_err(), "batch of 2");
     }
 
     #[test]
