@@ -1,0 +1,101 @@
+# Snap packaging for Kokos.
+#
+# Like the Flatpak, this exists so the app can run on distros older than the
+# one it was built on: `base: core24` makes snapd mount an Ubuntu 24.04 root
+# (glibc 2.39) under the app, so the same binary starts on Ubuntu 20.04/22.04
+# where the .deb/.rpm/.AppImage cannot.
+#
+# This packages binaries that `npm run tauri build` already produced rather
+# than compiling inside snapcraft: the Rust build needs ~40 min and `ort`
+# downloads prebuilt ONNX Runtime archives mid-build, which is a poor fit for
+# a snapcraft part. Run packaging/snap/stage-prebuilt.sh first.
+name: kokos
+base: core24
+version: '0.1.0'          # keep in step with Cargo.toml / package.json / tauri.conf.json
+summary: Local-first, encrypted password manager
+description: |
+  Kokos keeps your vault in a single encrypted .kokos file (Argon2id +
+  XChaCha20-Poly1305) on your own machine. Nothing leaves the device unless
+  you explicitly turn on sync or the opt-in breach check.
+
+  Typed entries, attachments, edit history, TOTP, a password generator,
+  full-text search, a password-health dashboard, and KeePass (.kdbx) import
+  and export.
+
+license: MIT
+grade: stable
+confinement: strict
+compression: lzo
+
+platforms:
+  amd64:
+
+# Write access to the two browser directories the native-messaging manifest
+# has to land in. `home` cannot express these: it grants nothing under a
+# dot-directory, and the manifest path is a dot-directory by construction.
+#
+# `personal-files` is a super-privileged interface: it never auto-connects,
+# and publishing a snap that declares it needs manual review on the Snap
+# Store. Users of a locally installed snap must connect it by hand:
+#
+#   sudo snap connect kokos:chrome-native-messaging
+#   sudo snap connect kokos:firefox-native-messaging
+#
+# Until connected, enabling browser integration fails at the manifest write;
+# everything else in the app keeps working.
+plugs:
+  chrome-native-messaging:
+    interface: personal-files
+    write:
+      - $HOME/.config/google-chrome/NativeMessagingHosts
+      - $HOME/.config/chromium/NativeMessagingHosts
+  firefox-native-messaging:
+    interface: personal-files
+    write:
+      - $HOME/.mozilla/native-messaging-hosts
+
+apps:
+  kokos:
+    command: usr/bin/kokos
+    common-id: dev.kuksov.kokos
+    desktop: usr/share/applications/kokos.desktop
+    # The gnome extension supplies GTK, the desktop/wayland/x11 plugs, theme
+    # content snaps and the environment wiring for them (gnome-46-2404).
+    extensions: [gnome]
+    plugs:
+      # Vaults live wherever the user put them; `removable-media` covers a
+      # vault on a USB stick. NOTE: the `home` interface does NOT grant access
+      # to dot-directories, so a vault under e.g. ~/.local/share cannot be
+      # reopened from a strictly confined snap even though the XDG portal
+      # dialog can select it. New vaults therefore default to
+      # $SNAP_REAL_HOME/Documents — see src-tauri/src/vault_dir.rs.
+      - home
+      - removable-media
+      # Opt-in HIBP breach check and Google Drive sync.
+      - network
+      - opengl
+      - chrome-native-messaging
+      - firefox-native-messaging
+
+  # The browser launches the sidecar itself, so it needs a path that resolves
+  # OUTSIDE the sandbox. Declaring it as an app is what makes snapd generate
+  # `/snap/bin/kokos.nmh`; `nmh::snap::host_wrapper` writes exactly that path
+  # into the manifest, and the app name here is half of it — renaming this
+  # entry without updating `NMH_APP` in src-tauri/src/nmh/snap.rs breaks the
+  # integration silently.
+  #
+  # No gnome extension and no plugs beyond the defaults: the host speaks the
+  # native-messaging protocol over stdio and reaches the app through the unix
+  # socket in the snap's own data dir, which confinement always allows. Both
+  # sides get the same remapped $HOME, so they derive the same socket path.
+  nmh:
+    command: usr/bin/kokos-nmh
+
+parts:
+  kokos:
+    plugin: dump
+    source: prebuilt
+    # WebKitGTK is not part of the gnome content snap; stage it into the snap
+    # itself. GTK itself comes from the extension, so it is not listed here.
+    stage-packages:
+      - libwebkit2gtk-4.1-0
