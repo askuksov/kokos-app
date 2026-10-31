@@ -1,51 +1,66 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { VaultProvider } from "./state/VaultContext";
+import { SettingsProvider } from "./state/SettingsContext";
+import { LangProvider } from "./state/LangContext";
+import { ClipboardProvider } from "./state/ClipboardContext";
+import { TabsProvider, useTabs } from "./state/TabsContext";
+import { WelcomeScreen } from "./screens/Welcome";
+import { TabLock } from "./screens/TabLock";
+import { VaultScreen } from "./screens/Vault";
+import { NmhConfirm } from "./components/NmhConfirm";
+import { Topbar } from "./components/Topbar";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
-
+function TabsBody() {
+  const { tabs, activeIndex, adding } = useTabs();
+  const activeTab = activeIndex >= 0 ? tabs[activeIndex] : null;
+  const openTabs = tabs.filter((t) => !t.locked);
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="kv-body">
+      {openTabs.map((tab) => (
+        <VaultProvider key={tab.vaultId} vaultId={tab.vaultId}>
+          {!adding && activeTab?.vaultId === tab.vaultId ? <VaultScreen /> : null}
+        </VaultProvider>
+      ))}
+      {!adding && activeTab?.locked && (
+        <TabLock key={activeTab.vaultId} path={activeTab.vaultId} />
+      )}
+      {adding && (
+        <VaultProvider key="__new__">
+          <WelcomeScreen />
+        </VaultProvider>
+      )}
+    </div>
   );
 }
 
-export default App;
+function Shell() {
+  const { tabs } = useTabs();
+  if (tabs.length === 0) {
+    return (
+      <VaultProvider key="__welcome__">
+        <WelcomeScreen />
+      </VaultProvider>
+    );
+  }
+  return (
+    <div className="kv-app">
+      <Topbar />
+      <TabsBody />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <SettingsProvider>
+      <LangProvider>
+        <ClipboardProvider>
+          <TabsProvider>
+            <Shell />
+            <NmhConfirm />
+          </TabsProvider>
+        </ClipboardProvider>
+      </LangProvider>
+    </SettingsProvider>
+  );
+}

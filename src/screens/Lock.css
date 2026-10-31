@@ -1,0 +1,90 @@
+
+.kv-lock {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 24px;
+  background: var(--bg-app);
+  color: var(--text-1);
+  animation: kv-fade 0.25s ease;
+}
+@keyframes kv-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.kv-lock .kv-lock-logo {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+}
+
+.kv-lock .kv-lock-logo .kv-lock-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.kv-lock-head {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kv-lock-head h2 {
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.kv-lock-head p {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.kv-lock-hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.kv-lock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 4px;
+}
+.kv-lock-form .kv-password-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.kv-lock-form .kv-password-field .kv-input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 13px;
+  font-size: 14px;
+}
+.kv-lock-form .kv-password-field .kv-input::placeholder {
+  color: var(--text-3);
+}
+
+.kv-lock-form .kv-keyfile-row .kv-input {
+  padding: 11px 13px;
+  font-size: 14px;
+}
+
+.kv-lock > .kv-btn {
+  width: 100%;
+  max-width: 420px;
+}
