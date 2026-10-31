@@ -1,7 +1,8 @@
 //! Splits a file into chunks on pre-parser block boundaries so a chunk never straddles a
 //! blank-line block (one entry = one block, so grouping survives). Each chunk is
-//! a byte span; a single block larger than the budget becomes its own chunk (the
-//! extractor truncates — never split a block mid-way).
+//! a byte span; a single block larger than the budget becomes its own chunk
+//! (never split a block mid-way). If that chunk does not fit the model context,
+//! the extractor returns no drafts for it and the heuristic floor covers it.
 
 use crate::text_import::model::Span;
 
