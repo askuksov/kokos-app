@@ -22,6 +22,7 @@ import { useT } from "../state/LangContext";
 import { PasswordField } from "../components/PasswordField";
 import { fileBasename, tildify } from "../lib/format";
 import { errorMessage } from "../lib/errors";
+import { RestoreWizard } from "./RestoreWizard";
 import kokosLogo from "../assets/kokos-logo.png";
 import "./Welcome.css";
 
@@ -116,6 +117,7 @@ export function WelcomeScreen() {
   const [openKeyfile, setOpenKeyfile] = useState<string | null>(null);
   const [pendingHasSaved, setPendingHasSaved] = useState(false);
   const [pendingHasBiometric, setPendingHasBiometric] = useState(false);
+  const [showRestore, setShowRestore] = useState(false);
   const openedRef = useRef(false);
   useEffect(() => {
     recentFiles().then(setRecents).catch(() => {});
@@ -495,6 +497,15 @@ export function WelcomeScreen() {
                   <Icon name="folder" />
                   {t("welcome.openExistingVault")}
                 </button>
+                <button
+                  type="button"
+                  className="kv-btn is-ghost is-lg is-block"
+                  disabled={busy}
+                  onClick={() => setShowRestore(true)}
+                >
+                  <Icon name="cloud" />
+                  {t("welcome.restoreFromDrive")}
+                </button>
               </div>
               <div className="kv-recent-list">
                 {recents.map((rv) => (
@@ -533,6 +544,7 @@ export function WelcomeScreen() {
           <span>{t("welcome.openFormat")}</span>
         </div>
       </div>
+      {showRestore && <RestoreWizard onClose={() => setShowRestore(false)} />}
     </div>
   );
 }

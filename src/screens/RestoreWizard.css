@@ -1,0 +1,60 @@
+
+.kv-restore-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 18px 14px;
+}
+
+.kv-restore-blurb {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.kv-restore-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 12px 10px;
+  list-style: none;
+}
+
+.kv-restore-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raise);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+  color: var(--text-2);
+  transition: box-shadow 0.15s var(--ease), background 0.15s var(--ease);
+  border: none;
+  font: inherit;
+}
+.kv-restore-item:hover {
+  box-shadow: inset 0 0 0 1px var(--accent-glow);
+  background: var(--bg-input);
+}
+.kv-restore-item:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.kv-restore-name {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-1);
+}
+
+.kv-restore-meta {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.kv-restore-tag { color: var(--text-3); font-variant-numeric: tabular-nums; }
