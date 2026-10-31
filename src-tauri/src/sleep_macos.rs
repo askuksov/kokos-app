@@ -14,16 +14,18 @@ pub fn install(handle: tauri::AppHandle) {
         let st = handle.state::<AppState>();
         let want = st.settings.lock().map(|s| s.lock_on_sleep).unwrap_or(false);
         if want {
+            // Lock every open vault, not just the active tab: same as the
+            // idle auto-lock in lib.rs.
             if let Ok(mut reg) = st.sessions.lock() {
-                if let Some(s) = reg.active_mut() {
+                for s in reg.iter_mut() {
                     if let Some(v) = s.vault.as_mut() {
                         let _ = kokos_core::audit::append(&v.conn, "lock", None);
                         let _ = kokos_core::vault::save(v);
                     }
-                    s.lock();
                 }
-                let _ = handle.emit("vault-locked", ());
+                reg.lock_all();
                 drop(reg);
+                let _ = handle.emit("vault-locked", serde_json::json!({ "vault_id": null }));
                 crate::nmh::invalidate_confirms(&handle);
             }
         }
