@@ -1,3 +1,14 @@
+#![allow(dead_code)]
+
+mod auth_failures;
+mod autolock;
+mod device;
+mod icloud_macos;
+mod paths;
+mod settings;
+pub mod session_registry;
+mod synced_folder;
+
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::image::Image;
 
@@ -5,7 +16,10 @@ use tauri::image::Image;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            use tauri::Emitter;
+            use tauri::{Emitter, Manager};
+            let dir = app.path().app_config_dir()?;
+            let _ = crate::device::cached(&dir);
+
             let handle = app.handle();
 
             let about = AboutMetadata {
