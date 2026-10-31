@@ -21,7 +21,7 @@ use zeroize::Zeroize;
 
 use crate::text_import::engine::extractor::{Extractor, FieldHint, RawEntryDraft};
 use crate::text_import::engine::parse::parse_drafts;
-use crate::text_import::engine::prompt::build_prompt;
+use crate::text_import::engine::prompt::{build_prompt, restore_control_marks};
 use crate::text_import::engine::registry::{ChatTemplateKind, GenModelDef};
 use crate::AiError;
 
@@ -132,7 +132,10 @@ impl Extractor for GenExtractor {
     fn extract(&self, chunk: &str, hints: &[FieldHint]) -> Result<Vec<RawEntryDraft>, AiError> {
         let mut prompt = build_prompt(chunk, hints, self.template);
         let mut raw = self.generate(&prompt)?;
-        let drafts = parse_drafts(&raw);
+        let mut drafts = parse_drafts(&raw);
+        for f in drafts.iter_mut().flat_map(|d| d.fields.iter_mut()) {
+            restore_control_marks(chunk, &mut f.verbatim_text);
+        }
         prompt.zeroize();
         raw.zeroize();
         Ok(drafts)
