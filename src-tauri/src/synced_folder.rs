@@ -32,7 +32,8 @@ pub fn sibling_conflicts(vault_path: &Path) -> Vec<String> {
 
 /// Best-effort: is this path under a folder some external client syncs?
 pub fn looks_synced(path: &Path) -> bool {
-    let s = path.to_string_lossy();
+    // Windows paths use `\`; normalise so the `/`-anchored markers match.
+    let s = path.to_string_lossy().replace('\\', "/");
     const MARKERS: [&str; 6] = [
         "Mobile Documents",
         "/Dropbox",
@@ -77,5 +78,12 @@ mod tests {
         assert!(looks_synced(Path::new("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/v.kokos")));
         assert!(looks_synced(Path::new("/Users/me/Dropbox/v.kokos")));
         assert!(!looks_synced(Path::new("/Users/me/Documents/v.kokos")));
+    }
+
+    #[test]
+    fn looks_synced_recognizes_windows_paths() {
+        assert!(looks_synced(Path::new(r"C:\Users\me\Dropbox\v.kokos")));
+        assert!(looks_synced(Path::new(r"C:\Users\me\OneDrive\Documents\v.kokos")));
+        assert!(!looks_synced(Path::new(r"C:\Users\me\Documents\v.kokos")));
     }
 }
