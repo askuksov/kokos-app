@@ -130,15 +130,24 @@ pub fn store_biometric(path: &str, pw: &str) -> Result<(), String> {
     let acct = account(path);
     let _ = delete_generic_password_options(PasswordOptions::new_generic_password(SERVICE, &acct));
 
+    // The old gated item is gone from here on, so a failure below must drop
+    // the presence marker too; otherwise `has_biometric` keeps reporting an
+    // item that no longer exists.
     let access_control = SecAccessControl::create_with_protection(
         Some(ProtectionMode::AccessibleWhenPasscodeSetThisDeviceOnly),
         AccessControlOptions::BIOMETRY_CURRENT_SET.bits(),
     )
-    .map_err(|_| "biometric storage unavailable".to_string())?;
+    .map_err(|_| {
+        let _ = delete_one(PRESENCE_SERVICE, &acct);
+        "biometric storage unavailable".to_string()
+    })?;
 
     let mut options = PasswordOptions::new_generic_password(SERVICE, &acct);
     options.set_access_control(access_control);
-    set_generic_password_options(pw.as_bytes(), options).map_err(|e| store_error_message(e.code()))?;
+    set_generic_password_options(pw.as_bytes(), options).map_err(|e| {
+        let _ = delete_one(PRESENCE_SERVICE, &acct);
+        store_error_message(e.code())
+    })?;
 
     if let Err(e) = store_presence_marker(&acct) {
         let _ = delete_generic_password_options(PasswordOptions::new_generic_password(SERVICE, &acct));
