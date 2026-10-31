@@ -16,6 +16,7 @@ mod state;
 pub mod session_registry;
 mod sync_config;
 mod synced_folder;
+mod uninstall;
 mod vault_dir;
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -24,6 +25,10 @@ use tauri::image::Image;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri::Manager;
+    // The uninstaller's cleanup mode exits here, before any window starts.
+    if let Some(mode) = uninstall::mode_from_args(std::env::args_os()) {
+        std::process::exit(uninstall::run(mode));
+    }
     tauri::Builder::default()
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
