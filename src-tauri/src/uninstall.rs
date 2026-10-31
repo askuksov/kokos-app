@@ -123,8 +123,8 @@ mod platform {
 /// Windows: the credential store via `CredEnumerateW`/`CredDeleteW`, and the
 /// browser registration via `nmh::manifest`.
 mod platform {
-    use std::ffi::{OsStr, OsString};
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
 
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
     use windows_sys::Win32::Security::Credentials::{
@@ -142,13 +142,14 @@ mod platform {
     const BROWSERS: [Browser; 2] = [Browser::Chrome, Browser::Firefox];
 
     pub fn kokos_credentials() -> Result<Vec<Target>, u32> {
-        let filter = wide_nul(&format!("*.{}", crate::keyring_store::SERVICE));
         let mut count: u32 = 0;
         let mut list: *mut *mut CREDENTIALW = std::ptr::null_mut();
-        // SAFETY: `filter` is NUL-terminated and outlives the call. On success
-        // the API returns `count` credential pointers that stay valid until
-        // `CredFree(list)` below.
-        if unsafe { CredEnumerateW(filter.as_ptr(), 0, &mut count, &mut list) } == 0 {
+        // The API filter only supports a `PREFIX*` pattern, and Kokos targets
+        // share a suffix, so enumerate everything and let
+        // `is_kokos_credential` pick ours.
+        // SAFETY: a NULL filter is allowed. On success the API returns `count`
+        // credential pointers that stay valid until `CredFree(list)` below.
+        if unsafe { CredEnumerateW(std::ptr::null(), 0, &mut count, &mut list) } == 0 {
             // SAFETY: plain thread-local error read.
             let err = unsafe { GetLastError() };
             return if err == ERROR_NOT_FOUND { Ok(Vec::new()) } else { Err(err) };
@@ -205,10 +206,6 @@ mod platform {
             std::io::Error::new(std::io::ErrorKind::NotFound, "APPDATA is not set")
         })?;
         manifest::remove(browser, &home)
-    }
-
-    fn wide_nul(s: &str) -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(Some(0)).collect()
     }
 
     /// # Safety
