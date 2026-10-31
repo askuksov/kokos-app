@@ -1,0 +1,63 @@
+# cargo-deny config — dependency advisory/license/ban/source gate for Kokos.
+# Run: cargo deny check
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# RUSTSEC advisories unfixable within MSRV 1.88 or not exploitable in our
+# usage go here, each with a rationale. Empty is the goal.
+ignore = [
+  # The gtk-rs GTK3 "unmaintained" advisories (RUSTSEC-2024-0411..0420) were
+  # withdrawn upstream on 2026-08-14, so they no longer need an entry here.
+  # proc-macro-error: unmaintained (2024-09-01). Build-time proc-macro dep of
+  # glib-macros in tauri's GTK3 stack, compiled for the Linux builds only.
+  # Leaves with tauri 3's move off GTK3; nothing for us to bump before then.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro helper; build-time dep of glib-macros in tauri's GTK3 stack (Linux builds); leaves with tauri 3" },
+  # unic-* (2025-10-18): unmaintained gtk-rs-adjacent Unicode crates, pulled
+  # in via urlpattern -> tauri-utils (used for IPC scope pattern matching),
+  # compiled on all platforms. Advisory itself states "No safe upgrade is
+  # available!" -- this is Tauri's internal dependency choice, not ours.
+  { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained; transitive via urlpattern->tauri-utils, advisory states no safe upgrade exists" },
+  { id = "RUSTSEC-2025-0075", reason = "unic-char-range unmaintained; transitive via urlpattern->tauri-utils, advisory states no safe upgrade exists" },
+  { id = "RUSTSEC-2025-0080", reason = "unic-common unmaintained; transitive via urlpattern->tauri-utils, advisory states no safe upgrade exists" },
+  { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident unmaintained; transitive via urlpattern->tauri-utils, advisory states no safe upgrade exists" },
+  { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version unmaintained; transitive via urlpattern->tauri-utils, advisory states no safe upgrade exists" },
+  # paste: unmaintained/archived (2024, RUSTSEC-2024-0436). A COMPILE-TIME-only
+  # proc-macro helper, pulled in transitively via gemm -> candle-core -> kokos-ai
+  # (local AI) -- not a direct dependency and not runtime code. candle 0.9-0.11 /
+  # gemm 0.19 still depend on it, so upgrading candle does not remove it.
+  { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; compile-time proc-macro helper, transitive via gemm->candle-core->kokos-ai; still required by candle 0.9-0.11 / gemm 0.19" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Permissive licenses acceptable for a shipped desktop app.
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
+  "Unicode-DFS-2016", "Unicode-3.0", "MPL-2.0", "CC0-1.0",
+  "BSL-1.0",           # Boost Software License 1.0 -- clipboard-win, error-code (via arboard, clipboard support)
+  "Unlicense",         # public-domain equivalent -- secstr (dev-dep via keepass, KDBX import tests)
+  "CDLA-Permissive-2.0", # permissive data license -- webpki-roots (via reqwest/hyper-rustls, HIBP HTTPS calls)
+]
+# Per-crate license exceptions go here only for a specific dep whose license
+# is acceptable but not in `allow`:  { crate = "name", allow = ["LICENSE"] }
+exceptions = []
+
+[licenses.private]
+# Our own workspace crates (kokos, kokos-core, kokos-nmh) are private
+# application crates with `publish = false` -- never intended for crates.io.
+# Skip license-field checks on them instead of inventing a license we don't
+# actually intend to grant.
+ignore = true
+
+[bans]
+multiple-versions = "warn"   # Cargo.lock legitimately carries dup majors
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
