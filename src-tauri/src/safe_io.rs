@@ -93,6 +93,11 @@ fn create_new_owner_only(path: &Path) -> std::io::Result<std::fs::File> {
 /// `take(max + 1)`, so a file swapped or grown after any earlier check cannot
 /// cause an oversized read. `Ok(None)` = not a regular file or over the cap.
 pub fn read_regular_capped(path: &str, max: u64) -> std::io::Result<Option<Vec<u8>>> {
+    read_regular_capped_path(Path::new(path), max)
+}
+
+/// [`read_regular_capped`] for a `Path`, so non-UTF-8 paths work too.
+pub fn read_regular_capped_path(path: &Path, max: u64) -> std::io::Result<Option<Vec<u8>>> {
     let mut opts = std::fs::OpenOptions::new();
     opts.read(true);
     #[cfg(unix)]

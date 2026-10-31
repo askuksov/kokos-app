@@ -624,11 +624,16 @@ fn analyze_paths(
         };
         emit("read", 0, 0);
         let per_file: Option<ImportProposal> = (|| {
-            let md = std::fs::metadata(path).ok()?;
-            if !md.is_file() || md.len() > MAX_TEXT_IMPORT_SIZE {
-                return None;
-            }
-            let mut text = std::fs::read_to_string(path).ok()?;
+            // Type and size are checked on the opened handle, so a file
+            // swapped after the walk cannot bypass the cap.
+            let bytes = crate::paths::safe_io::read_regular_capped_path(path, MAX_TEXT_IMPORT_SIZE).ok()??;
+            let mut text = match String::from_utf8(bytes) {
+                Ok(t) => t,
+                Err(e) => {
+                    e.into_bytes().zeroize();
+                    return None;
+                }
+            };
             emit("analyze", 0, 0);
             let res = analyze_text_with_progress(&text, engine, CHUNK_BUDGET_BYTES, &mut |d, t| emit("analyze", d, t)).ok().map(|mut p| {
                 // Bound per file AND across the whole proposal before stamping
