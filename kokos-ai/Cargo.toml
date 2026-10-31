@@ -1,0 +1,38 @@
+[package]
+name = "kokos-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+# `ort` is split per target — see the cfg(windows) block at the end of this file.
+
+[dev-dependencies]
+tempfile = "3"
+
+# ort's default `download-binaries` links pyke's prebuilt ONNX Runtime into the
+# binary statically. That build's C++ static initialisers execute BMI2
+# instructions (SHLX) at process load, so on a pre-Haswell CPU — Sandy Bridge,
+# for one — every binary that links kokos-ai dies with STATUS_ILLEGAL_INSTRUCTION
+# *before* `main`, whether or not any AI feature is ever touched. Verified
+# 2026-08-24 on an i5-2500K: a probe that only links `ort` and prints from `main`
+# never reached its first `println!`.
+#
+# Windows therefore loads ONNX Runtime at runtime instead: the app always starts,
+# and the library is opened only when an embedding session is built (`embed.rs`).
+# Microsoft's official onnxruntime.dll dispatches on CPUID and does run on those
+# CPUs. `api-27` mirrors ort's own default, so the DLL must be ONNX Runtime
+# >= 1.27; a missing or older DLL degrades to a failing embedder, not a crashing
+# app.
+#
+# macOS and Linux keep the static link — unchanged, and no DLL to ship.
+[target.'cfg(not(windows))'.dependencies]
+ort = "2.0.0-rc.13"
+
+[target.'cfg(windows)'.dependencies]
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic", "api-27"] }

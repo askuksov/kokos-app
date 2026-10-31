@@ -1,5 +1,5 @@
 [workspace]
-members = ["kokos-core", "kokos-nmh", "src-tauri"]
+members = ["kokos-core", "kokos-nmh", "kokos-ai", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
