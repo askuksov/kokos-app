@@ -1,0 +1,224 @@
+
+.kv-search-hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 2px 12px;
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  color: var(--text-3);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+  position: relative;
+  overflow: visible;
+}
+.kv-search-hint:hover,
+.kv-search-hint:focus-within {
+  border-color: var(--line-strong);
+  color: var(--text-2);
+}
+.kv-search-hint:focus-within {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.kv-search-hint .grow {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  color: var(--text-1);
+}
+.kv-search-hint .grow::placeholder {
+  color: var(--text-3);
+}
+
+.kv-kbd {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: var(--bg-raise);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 5px;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.kv-search-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.kv-search-filter:hover {
+  color: var(--text-1);
+}
+.kv-search-filter.is-on {
+  color: var(--accent);
+}
+.kv-search-filter:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.kv-search-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+
+.kv-side-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kv-side-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5.5px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  width: 100%;
+  text-align: left;
+  position: relative;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.kv-side-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.kv-side-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.kv-side-item.is-active .kv-count {
+  color: var(--accent);
+  opacity: 0.75;
+}
+.kv-side-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.kv-side-item .label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kv-side-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 14px 8px 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kv-side-label .kv-btn.is-icon {
+  padding: 6px;
+  margin: -2px 0;
+}
+
+.kv-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.kv-ico {
+  flex-shrink: 0;
+}
+
+.kv-chev {
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  flex-shrink: 0;
+  border-radius: 4px;
+  transition: transform 0.18s var(--ease);
+  margin-right: -3px;
+}
+.kv-chev.is-open {
+  transform: rotate(90deg);
+}
+.kv-chev:hover {
+  color: var(--text-1);
+}
+
+.kv-group-item {
+  position: relative;
+}
+
+.kv-group-item.is-dragging {
+  opacity: 0.35;
+}
+.kv-group-item.is-drop-inside {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent-glow);
+}
+.kv-group-item.is-drop-before::after,
+.kv-group-item.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  z-index: 2;
+}
+.kv-group-item.is-drop-before::after {
+  top: -1.5px;
+}
+.kv-group-item.is-drop-after::after {
+  bottom: -1.5px;
+}
+
+.kv-side .kv-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px -1px currentColor;
+}
+
+.kv-side-foot {
+  padding: 10px 2px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+}
+

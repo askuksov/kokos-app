@@ -1,0 +1,37 @@
+
+.kv-totp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kv-totp-code {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.kv-totp-ring {
+  flex: none;
+}
+
+.kv-totp-ring-track {
+  stroke: var(--line-strong);
+}
+
+.kv-totp-ring-fill {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 0.2s linear;
+}
+
+.kv-totp-ring-label {
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font);
+  fill: var(--text-2);
+}
+
+.kv-totp-error {
+  color: var(--danger);
+  font-style: italic;
+}

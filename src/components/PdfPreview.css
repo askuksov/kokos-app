@@ -1,0 +1,13 @@
+.kv-pdf-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.kv-pdf-page {
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
