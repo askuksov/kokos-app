@@ -48,6 +48,9 @@ pub struct AppState {
     pub ai_backfill_cancel: Arc<AtomicBool>,
     /// Set by `ai_model_download_cancel`, polled by an in-flight model download.
     pub ai_download_cancel: Arc<AtomicBool>,
+    /// True while an `ai_model_download` runs, so a second call is refused
+    /// instead of racing the first one on the same files.
+    pub ai_download_active: Arc<AtomicBool>,
     /// Loaded generative extractor (None until the gen model is downloaded/primed).
     pub gen_engine: Mutex<Option<Arc<kokos_ai::text_import::engine::gen::GenExtractor>>>,
     /// Set by `ai_text_import_cancel`, polled by an in-flight analyze loop.
@@ -103,6 +106,7 @@ impl AppState {
             ai_embedder: Mutex::new(None),
             ai_backfill_cancel: Arc::new(AtomicBool::new(false)),
             ai_download_cancel: Arc::new(AtomicBool::new(false)),
+            ai_download_active: Arc::new(AtomicBool::new(false)),
             gen_engine: Mutex::new(None),
             gen_import_cancel: Arc::new(AtomicBool::new(false)),
             gen_download: Arc::new(Mutex::new(crate::text_import::GenDownloadState::default())),

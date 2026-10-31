@@ -4,7 +4,8 @@
 //! Enable/disable is audited into the active vault (keychain_enable precedent).
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -225,6 +226,11 @@ pub async fn ai_model_download(app: AppHandle, state: State<'_, AppState>) -> Cm
         return Ok(());
     }
 
+    // One download at a time: a second call would reset the first one's
+    // cancel flag and write the same `.part` files. The guard moves into the
+    // worker, so the flag clears on every exit path of the actual download.
+    let guard = DownloadGuard::claim(&state.ai_download_active).ok_or_else(|| "download_in_progress".to_string())?;
+
     let app2 = app.clone();
     let cancel = state.ai_download_cancel.clone();
     cancel.store(false, Ordering::SeqCst);
@@ -235,6 +241,7 @@ pub async fn ai_model_download(app: AppHandle, state: State<'_, AppState>) -> Cm
         def.tokenizer_sha256.to_string(),
     );
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let _guard = guard;
         let emit = |downloaded: u64, total: u64| {
             let _ = app2.emit(
                 "ai_download_progress",
@@ -253,6 +260,24 @@ pub async fn ai_model_download(app: AppHandle, state: State<'_, AppState>) -> Cm
 
     audit_active_vault(&state, vec![("ai_model_downloaded", Some(def.id.to_string()))]).await;
     Ok(())
+}
+
+/// Holds the "download running" flag; clears it when dropped.
+struct DownloadGuard(Arc<AtomicBool>);
+
+impl DownloadGuard {
+    /// `None` when another download already holds the flag.
+    fn claim(flag: &Arc<AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| Self(flag.clone()))
+    }
+}
+
+impl Drop for DownloadGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Stop an in-flight `ai_model_download`. The download loop checks the flag
@@ -377,5 +402,15 @@ mod tests {
         assert!(!should_prime_engine(true, false), "enabled but no model -> skip");
         assert!(!should_prime_engine(false, true), "disabled -> skip even if present");
         assert!(!should_prime_engine(false, false), "disabled + no model -> skip");
+    }
+
+    #[test]
+    fn download_guard_is_single_flight_and_clears_on_drop() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let first = DownloadGuard::claim(&flag).expect("a free flag can be claimed");
+        assert!(DownloadGuard::claim(&flag).is_none(), "a second claim is refused while the first is held");
+        drop(first);
+        assert!(!flag.load(Ordering::SeqCst), "dropping the guard clears the flag");
+        assert!(DownloadGuard::claim(&flag).is_some(), "the flag can be claimed again");
     }
 }
