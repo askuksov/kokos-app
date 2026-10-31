@@ -15,12 +15,14 @@ pub fn install(handle: tauri::AppHandle) {
         let want = st.settings.lock().map(|s| s.lock_on_sleep).unwrap_or(false);
         if want {
             // Lock every open vault, not just the active tab: same as the
-            // idle auto-lock in lib.rs.
+            // idle auto-lock in lib.rs. The "lock" audit row is not a content
+            // change, so `save_opened` keeps the sync revision as is; a bump
+            // here could make a stale local copy win over a newer remote one.
             if let Ok(mut reg) = st.sessions.lock() {
                 for s in reg.iter_mut() {
                     if let Some(v) = s.vault.as_mut() {
                         let _ = kokos_core::audit::append(&v.conn, "lock", None);
-                        let _ = kokos_core::vault::save(v);
+                        let _ = kokos_core::vault::save_opened(v);
                     }
                 }
                 reg.lock_all();
