@@ -49,7 +49,7 @@ so — exactly like the sidecar above — a Windows build **fails outright when 
 is missing**, with `resource path binaries/onnxruntime.dll doesn't exist`.
 Stage it with:
 
-    packaging\windows\fetch-onnxruntime.ps1
+    .\packaging\windows\fetch-onnxruntime.ps1
 
 Why it exists at all: Windows is the one platform that does not link ONNX
 Runtime statically. The prebuilt static build `ort` downloads runs BMI2
