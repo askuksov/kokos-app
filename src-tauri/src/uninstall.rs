@@ -192,9 +192,9 @@ mod platform {
     }
 
     pub fn registered_browsers() -> Vec<Browser> {
-        let Some(home) = crate::commands::nmh_home() else {
-            return Vec::new();
-        };
+        // `is_installed` reads the registry here and ignores `home`, so a
+        // missing APPDATA must not hide a registered browser.
+        let home = crate::commands::nmh_home().unwrap_or_default();
         BROWSERS
             .into_iter()
             .filter(|b| manifest::is_installed(*b, &home))
