@@ -12,8 +12,17 @@ sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 # `ort` is split per target — see the cfg(windows) block at the end of this file.
+
+# Generative text-import runtime. Pure-Rust CPU inference of a quantized
+# GGUF instruct model; no cmake/native dylib (unlike llama-cpp-2). The concrete
+# `GenExtractor` compiles here but is exercised ONLY by the manual dev benchmark
+# (`text-import-bench` bin) + the Tauri app path — never by the CI test suite, and
+# no model is downloaded at build or test time.
+candle-core = "0.9"
+candle-transformers = "0.9"
 kokos-core = { path = "../kokos-core" }
 rusqlite = "0.32"
+zeroize = { workspace = true }
 regex = "1"
 serde_json = "1"
 
