@@ -1,0 +1,144 @@
+.kv-onboarding {
+  width: min(520px, 100%);
+  margin: 0 auto;
+  padding: 18px 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raise-panel);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--accent) 22%, transparent),
+    var(--shadow-card);
+  color: var(--text-1);
+}
+
+/* In the light theme --bg-raise is pure white and --bg-panel is all but
+   white, so the raised fill alone carries no separation and the card
+   survives on a single hairline. --bg-raise-panel
+   warms the fill for this card and every .kv-card; firm up ring and shadow
+   here on top of that. */
+:root[data-theme="light"] .kv-onboarding {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--accent) 30%, transparent),
+    0 1px 3px oklch(0.28 0.03 60 / 0.1);
+}
+
+.kv-onboarding.is-collapsed {
+  gap: 8px;
+  padding: 10px 14px;
+  align-items: center;
+}
+
+.kv-onboarding-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kv-onboarding-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kv-onboarding-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kv-onboarding-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.kv-onboarding-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in oklch, var(--text-2) 20%, transparent);
+  overflow: hidden;
+}
+
+.kv-onboarding-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.kv-onboarding-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kv-onboarding-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.kv-onboarding-step.is-done .kv-onboarding-step-text strong {
+  color: var(--text-2);
+  text-decoration: line-through;
+}
+
+.kv-onboarding-step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.kv-onboarding-step-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kv-onboarding-step-text small {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.kv-onboarding-step-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.kv-onboarding-alldone {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.kv-onboarding-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.kv-onboarding-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.kv-onboarding-prompt {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
