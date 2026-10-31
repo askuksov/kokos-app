@@ -13,23 +13,83 @@
     "windows": [
       {
         "title": "Kokos",
-        "width": 800,
-        "height": 600
+        "width": 1380,
+        "height": 860,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {
     "active": true,
+    "publisher": "Oleksandr Kuksov",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "linux": {
+      "appimage": {
+        "files": {
+          "/usr/share/doc/kokos/THIRD-PARTY-NOTICES.md": "../THIRD-PARTY-NOTICES.md",
+          "/usr/share/doc/kokos/copyright": "../LICENSE"
+        }
+      },
+      "deb": {
+        "depends": [
+          "libc6 (>= 2.39)",
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ],
+        "files": {
+          "/usr/share/doc/kokos/THIRD-PARTY-NOTICES.md": "../THIRD-PARTY-NOTICES.md",
+          "/usr/share/doc/kokos/copyright": "../LICENSE"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "libc.so.6(GLIBC_2.39)(64bit)",
+          "webkit2gtk4.1",
+          "gtk3"
+        ],
+        "files": {
+          "/usr/share/doc/kokos/THIRD-PARTY-NOTICES.md": "../THIRD-PARTY-NOTICES.md",
+          "/usr/share/licenses/kokos/LICENSE": "../LICENSE"
+        }
+      }
+    },
     "targets": "all",
+    "externalBin": [
+      "binaries/kokos-nmh"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "kokos"
+        ],
+        "name": "Kokos Vault",
+        "description": "Kokos password vault",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/uninstall-hooks.nsh"
+      }
+    },
+    "macOS": {
+      "signingIdentity": "Kokos Local Signing"
+    }
   }
 }

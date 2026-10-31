@@ -1,26 +1,114 @@
 [package]
 name = "kokos"
-version = "0.1.0"
+version.workspace = true
+publish.workspace = true
 description = "Local-first, encrypted password manager"
 authors = ["Oleksandr Kuksov"]
-license = "MIT"
-repository = "https://github.com/askuksov/kokos-app"
-edition = "2024"
+edition = "2021"
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# Lowercase, so the installed command is /usr/bin/kokos on every distribution.
+# It used to be "Kokos" to make the macOS dock read nicely under `tauri dev`,
+# but that is a development-time cosmetic and release bundles take their name
+# from productName anyway.
+[[bin]]
+name = "kokos"
+path = "src/main.rs"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "kokos_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# `rlib` alone: the binary links this crate statically, and nothing loads it at
+# runtime. Tauri's template also lists `staticlib` and `cdylib` for mobile
+# targets, which this project does not build — and on Windows the `cdylib`
+# leaves a kokos_lib.dll beside the binary, which WiX then sweeps into the MSI
+# as a fourth, unused payload file. Restore both if an iOS/Android target is
+# ever added.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+tauri = { version = "2", features = ["image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+kokos-core = { path = "../kokos-core" }
+kokos-nmh = { path = "../kokos-nmh" }
+kokos-ai = { path = "../kokos-ai" }
+# Direct dep only for the `&rusqlite::Connection` type in `suggest_by_centroid`'s
+# `build_candidates` bound. Same 0.32 + bundled/serialize already used
+# transitively via kokos-core, so no NEW crate enters the graph; Cargo.lock
+# gains only a one-line edge to the existing rusqlite package.
+rusqlite = { version = "0.32", features = ["bundled", "serialize"] }
+zeroize = { workspace = true }
+rfd = "0.17"
+arboard = { version = "3", default-features = false }
+# apple-native: without it, keyring silently aliases its "default" backend to
+# the non-persistent mock on macOS (see keyring src/lib.rs backend-selection
+# cfg) — i.e. plain `keyring = "3"` would make the real Keychain unreachable.
+# windows-native: same story on Windows — the Credential Manager backend is
+# feature-gated too, so without it a Windows build silently keeps the
+# remembered master password in the mock backend and loses it on restart.
+# keyring declares that feature's deps (windows-sys, byteorder) under
+# `cfg(target_os = "windows")` in its own manifest, so naming it here adds
+# nothing to the macOS/Linux builds.
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+tiny_http = "0.12"
+open = "5"
+base64 = "0.22"
+urlencoding = "2"
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+# getpeereid(2) for the native-messaging socket peer-uid gate (layer A).
+# Resolves to the libc already deep in the dependency tree (tauri et
+# al.), so 0 new lock entries; unix-only because the whole NMH listener is
+# unix-only (see src/nmh/mod.rs's `serve`/`start` cfg-gating).
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace"] }
+block2 = "0.6"
+# Biometric backend (OS-enforced SecAccessControl gate on a Keychain item
+# — see biometric_macos.rs). Pinned
+# to "3.5" to match the major `keyring`'s own apple-native feature already
+# resolves on macOS (see the `keyring` dep above), so no second
+# security-framework version enters the tree. OSX_10_13 unlocks the
+# BIOMETRY_CURRENT_SET access-control flag used for the Touch ID gate.
+security-framework = { version = "3.5", features = ["OSX_10_13"] }
+# Same major security-framework 3.5 itself depends on (see its own
+# Cargo.toml) — added directly only for the errSecItemNotFound status
+# constant (idempotent delete_biometric); resolves to the already-locked
+# 2.15.0, 0 new lock entries.
+security-framework-sys = "2.15"
+# is_biometric_available() (hardware+enrollment probe, no prompt) has no
+# Security.framework equivalent — LocalAuthentication's canEvaluatePolicy is
+# the only non-interactive capability check, so this is needed alongside
+# security-framework regardless of the storage-path choice. Trimmed
+# to the one feature family actually used (LAContext + LAPolicy).
+objc2-local-authentication = { version = "0.3", default-features = false, features = ["LAContext", "std"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+
+# Native-messaging host registration on Windows is a registry key, not a file
+# in a fixed directory (see nmh/manifest.rs) — hence the Registry API. Same
+# windows-sys 0.60 the rest of the tree already resolves to.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Credentials",
+    "Win32_System_Registry",
+] }

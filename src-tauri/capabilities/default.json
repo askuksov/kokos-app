@@ -1,10 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Main window: IPC commands only. No fs/shell/http — file access lives in the Rust core. `allow-start-dragging` is the one window command added on top of core:default: the window uses titleBarStyle \"Overlay\"/hiddenTitle (tauri.conf.json), so there is no OS titlebar to grab and `data-tauri-drag-region` is the only way to move it — and that surface is inert without this permission.",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "opener:default"
-  ]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }
