@@ -1,0 +1,61 @@
+# Maintainer: Oleksandr Kuksov
+#
+# Prebuilt package: unpacks the .deb published to packages.kuksov.dev.
+# pkgver, _debfile and sha256sums are written by packaging/aur/prepare-release.sh
+# from a real artifact — do not edit them by hand.
+pkgname=kokos-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Local-first, encrypted password manager"
+arch=('x86_64')
+url="https://github.com/askuksov/kokos-app"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3')
+provides=('kokos')
+conflicts=('kokos')
+options=('!strip' '!debug')
+_debfile="kokos_0.1.0_amd64.deb"
+source=("kokos-${pkgver}.deb::https://packages.kuksov.dev/deb/pool/main/k/kokos/${_debfile}")
+noextract=("kokos-${pkgver}.deb")
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+
+package() {
+  cd "$srcdir"
+
+  # noextract is set, so makepkg left the .deb alone: an ar archive holding
+  # debian-binary, control.tar.* and data.tar.*. Unpack it by hand rather than
+  # letting makepkg guess by mimetype.
+  bsdtar -xf "kokos-${pkgver}.deb"
+  local data
+  data=$(find . -maxdepth 1 -name 'data.tar.*' | head -1)
+  [ -n "$data" ] || { echo "no data.tar.* inside kokos-${pkgver}.deb" >&2; return 1; }
+  bsdtar -xf "$data" -C "$pkgdir"
+
+  # The deb ships the command as /usr/bin/kokos, which is what the desktop
+  # entry's Exec= and Arch convention both expect. Fail loudly if a future
+  # bundle stops doing that, rather than shipping a package with no command.
+  [ -e "$pkgdir/usr/bin/kokos" ] || {
+    echo "the deb payload has no /usr/bin/kokos" >&2; return 1; }
+
+  # Debian ships the licence as /usr/share/doc/<pkg>/copyright; Arch wants
+  # /usr/share/licenses/<pkgname>/. Either casing of the doc dir is accepted
+  # because the deb's directory name follows productName, which is unverified.
+  local c
+  for c in "$pkgdir/usr/share/doc/kokos/copyright" "$pkgdir/usr/share/doc/Kokos/copyright"; do
+    [ -f "$c" ] || continue
+    install -Dm644 "$c" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    break
+  done
+
+  # Arch convention keeps every licence document under
+  # /usr/share/licenses/<pkgname>/. The deb already carries the third-party
+  # notices under /usr/share/doc/<productName>/; mirror them across so the
+  # attribution obligation is satisfied by the Arch package on its own terms.
+  local t
+  for t in "$pkgdir/usr/share/doc/kokos/THIRD-PARTY-NOTICES.md" \
+           "$pkgdir/usr/share/doc/Kokos/THIRD-PARTY-NOTICES.md"; do
+    [ -f "$t" ] || continue
+    install -Dm644 "$t" "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES.md"
+    break
+  done
+}
