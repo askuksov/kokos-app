@@ -146,6 +146,18 @@ impl OrtEmbedder {
             .with_truncation(Some(trunc))
             .map_err(|e| AiError::Backend(e.to_string()))?;
 
+        // Windows links ONNX Runtime at runtime. Load the DLL explicitly so a
+        // missing or too-old DLL is an error here; left to ort's lazy loader,
+        // it panics on the first API call instead.
+        #[cfg(windows)]
+        {
+            let dylib = std::env::var("ORT_DYLIB_PATH")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "onnxruntime.dll".to_owned());
+            let _ = ort::init_from(dylib).map_err(|e| AiError::Backend(e.to_string()))?;
+        }
+
         let session = Session::builder()
             .map_err(|e| AiError::Backend(e.to_string()))?
             .commit_from_file(model_path)
