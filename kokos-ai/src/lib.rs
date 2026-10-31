@@ -6,6 +6,7 @@ pub mod meta;
 pub mod registry;
 pub mod search;
 pub mod store;
+pub mod text_import;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AiError {
