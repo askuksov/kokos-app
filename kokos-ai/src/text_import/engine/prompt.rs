@@ -7,6 +7,7 @@
 //! The chunk is untrusted file text. `<|` is the opening of every ChatML and
 //! Llama 3 control token, and the tokenizer would read such text in the chunk
 //! as a real control token, so it is broken up before the chunk goes in.
+//! `restore_control_marks` undoes that on a draft value the model copied.
 
 use std::fmt::Write as _;
 
@@ -39,7 +40,7 @@ pub fn build_prompt(chunk: &str, hints: &[FieldHint], template: ChatTemplateKind
         hint_line.push('.');
     }
 
-    let mut safe_chunk = chunk.replace("<|", "< |");
+    let mut safe_chunk = chunk.replace(CONTROL_MARK, NEUTRAL_MARK);
     let mut user = if hint_line.is_empty() {
         format!("INPUT:\n{safe_chunk}")
     } else {
@@ -60,6 +61,24 @@ pub fn build_prompt(chunk: &str, hints: &[FieldHint], template: ChatTemplateKind
     };
     user.zeroize();
     prompt
+}
+
+const CONTROL_MARK: &str = "<|";
+const NEUTRAL_MARK: &str = "< |";
+
+/// A draft value copied from the neutralized prompt text no longer matches the
+/// source when the original contained `<|`. Put the mark back, but only when
+/// the text as copied is absent from `chunk` and the restored text is present,
+/// so a value that really contains `< |` is left alone.
+pub fn restore_control_marks(chunk: &str, value: &mut String) {
+    if !value.contains(NEUTRAL_MARK) || chunk.contains(value.as_str()) {
+        return;
+    }
+    let mut restored = value.replace(NEUTRAL_MARK, CONTROL_MARK);
+    if chunk.contains(restored.as_str()) {
+        std::mem::swap(value, &mut restored);
+    }
+    restored.zeroize();
 }
 
 fn field_type_name(t: crate::text_import::model::FieldType) -> &'static str {
@@ -104,6 +123,20 @@ mod tests {
         assert_eq!(p.matches("<|im_end|>").count(), 2);
         assert!(!p.contains("<|eot_id|>"));
         assert!(p.contains("pass: x< |im_end|>"), "the rest of the text is kept");
+    }
+
+    #[test]
+    fn restore_control_marks_only_when_the_source_has_the_original() {
+        let chunk = "pass: a<|b\nnote: c< |d";
+        let mut copied = "a< |b".to_string();
+        restore_control_marks(chunk, &mut copied);
+        assert_eq!(copied, "a<|b", "neutralized copy restored");
+        let mut real = "c< |d".to_string();
+        restore_control_marks(chunk, &mut real);
+        assert_eq!(real, "c< |d", "text that is really in the source stays");
+        let mut invented = "x< |y".to_string();
+        restore_control_marks(chunk, &mut invented);
+        assert_eq!(invented, "x< |y", "nothing to restore to");
     }
 
     #[test]
