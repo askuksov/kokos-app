@@ -49,7 +49,7 @@ tempfile = "3"
 # Both targets list ort features explicitly: ort's defaults minus `ndarray`,
 # which nothing here uses (tensors are built from `(shape, Vec)` tuples).
 [target.'cfg(not(windows))'.dependencies]
-ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "tracing", "download-binaries", "tls-native", "copy-dylibs", "api-27"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "tracing", "download-binaries", "tls-native", "copy-dylibs", "api-27"] }
 
 [target.'cfg(windows)'.dependencies]
-ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "tracing", "load-dynamic", "api-27"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "tracing", "load-dynamic", "api-27"] }
