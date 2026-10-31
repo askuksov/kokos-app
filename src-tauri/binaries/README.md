@@ -8,6 +8,12 @@ Tauri resolves `externalBin: ["binaries/kokos-nmh"]` to
     TRIPLE=$(rustc -vV | sed -n 's/^host: //p')
     cp target/release/kokos-nmh "src-tauri/binaries/kokos-nmh-$TRIPLE"
 
+On Windows (PowerShell) the binary has an `.exe` suffix:
+
+    cargo build --release -p kokos-nmh
+    $triple = (rustc -vV | Select-String '^host:').ToString().Split(' ')[1]
+    Copy-Item target\release\kokos-nmh.exe "src-tauri\binaries\kokos-nmh-$triple.exe"
+
 The copies are build artifacts — keep `src-tauri/binaries/kokos-nmh-*` out of
 git (see .gitignore) and re-copy after every host change.
 
