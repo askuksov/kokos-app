@@ -1,0 +1,262 @@
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist[wght].woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../assets/fonts/GeistMono[wght].woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+.kv-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 100;
+}
+
+.kv-window {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  background: var(--bg-app);
+  color: var(--text-1);
+  font-size: 13px;
+  transition: background 0.35s var(--ease);
+}
+
+.kv-window.has-banner {
+  padding-top: 52px;
+}
+
+.kv-window.has-reopen-banner {
+  padding-top: 48px;
+}
+.kv-window.has-banner.has-reopen-banner {
+  padding-top: 100px;
+}
+.kv-window.has-banner.has-reopen-banner .kv-reopen-banner {
+  top: 52px;
+}
+
+.kv-window[data-density="compact"] {
+  --row-pad: 6px;
+}
+
+.kv-app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+}
+.kv-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.kv-body > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.kv-side {
+  width: 232px;
+  flex-shrink: 0;
+  background: var(--bg-side);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 10px;
+  transition: width 0.3s var(--ease);
+}
+
+.kv-list {
+  width: 308px;
+  flex-shrink: 0;
+  background: var(--bg-list);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  transition: background 0.35s var(--ease);
+}
+
+.kv-detail {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  transition: background 0.35s var(--ease);
+}
+
+.kv-window ::-webkit-scrollbar {
+  width: 10px;
+}
+.kv-window ::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.kv-window ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.kv-btn {
+  font: inherit;
+  color: var(--text-1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease, box-shadow 0.2s ease;
+  white-space: nowrap;
+}
+.kv-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.kv-btn:active {
+  transform: scale(0.97);
+}
+.kv-btn.is-icon {
+  padding: var(--space-2);
+  color: var(--text-2);
+}
+.kv-btn.is-icon:hover:not(:disabled) {
+  color: var(--text-1);
+}
+.kv-btn.is-primary,
+.kv-btn.is-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+}
+.kv-btn.is-primary {
+  color: var(--on-accent);
+  box-shadow: 0 1px 3px var(--accent-glow), inset 0 1px 0 var(--btn-highlight);
+}
+.kv-btn.is-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.kv-btn.is-ghost {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.kv-btn.is-danger {
+  color: var(--danger);
+}
+.kv-btn.is-danger:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
+}
+.kv-btn.is-lg {
+  padding: var(--space-5) var(--space-8);
+  font-size: 14px;
+  font-weight: 550;
+  border-radius: var(--radius-md);
+}
+.kv-btn.is-block {
+  width: 100%;
+}
+.kv-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.kv-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.kv-btn.is-ghost:disabled {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.kv-float {
+  position: relative;
+}
+.kv-input {
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.kv-input:hover {
+  border-color: var(--line-strong);
+}
+.kv-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  background: var(--bg-raise);
+}
+.kv-float label {
+  position: absolute;
+  left: 13px;
+  top: 15px;
+  font-size: 13.5px;
+  color: var(--text-3);
+  pointer-events: none;
+  transition: all 0.18s var(--ease);
+}
+.kv-float:focus-within label,
+.kv-float.has-value label {
+  top: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.kv-float:focus-within label {
+  color: var(--accent);
+}
+
+.kv-error {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--danger);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

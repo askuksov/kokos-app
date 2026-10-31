@@ -1,0 +1,80 @@
+
+:root {
+  --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --r: 10px;
+  --radius-xs: 6px;
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 18px;
+  --row-pad: 10px;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --bg-app: oklch(0.165 0.012 60);
+  --bg-side: oklch(0.19 0.014 60 / 0.6);
+  --bg-list: oklch(0.205 0.014 60);
+  --bg-panel: oklch(0.175 0.012 60);
+  --bg-raise: oklch(0.245 0.016 60);
+  --bg-raise-panel: var(--bg-raise);
+  --bg-input: oklch(0.225 0.015 60);
+  --bg-hover: oklch(1 0 0 / 0.05);
+  --bg-active: oklch(1 0 0 / 0.08);
+  --text-1: oklch(0.93 0.006 65);
+  --text-2: oklch(0.68 0.016 65);
+  --text-3: oklch(0.5 0.016 65);
+  --line: oklch(1 0 0 / 0.07);
+  --line-strong: oklch(1 0 0 / 0.13);
+  --accent: oklch(0.68 0.09 62);
+  --accent-deep: oklch(0.58 0.095 55);
+  --accent-soft: oklch(0.68 0.09 62 / 0.16);
+  --accent-glow: oklch(0.68 0.09 62 / 0.34);
+  --on-accent: oklch(0.98 0.012 78);
+  --scrim: oklch(0.1 0.01 60 / 0.55);
+  --shadow-pop: 0 24px 64px oklch(0 0 0 / 0.5), 0 4px 16px oklch(0 0 0 / 0.35);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.25);
+  --monogram-shadow: oklch(0 0 0 / 0.2);
+  --monogram-highlight: oklch(1 0 0 / 0.18);
+  --btn-highlight: oklch(1 0 0 / 0.18);
+  --danger: oklch(0.66 0.16 25);
+  --ok: oklch(0.7 0.15 155);
+  --warn: oklch(0.74 0.13 80);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg-app: oklch(0.965 0.006 70);
+  --bg-side: oklch(0.945 0.008 70 / 0.7);
+  --bg-list: oklch(0.985 0.005 70);
+  --bg-panel: oklch(0.997 0.002 70);
+  --bg-raise: oklch(1 0 0);
+  --bg-raise-panel: oklch(0.97 0.011 70);
+  --bg-input: oklch(0.955 0.008 70);
+  --bg-hover: oklch(0.3 0.03 60 / 0.05);
+  --bg-active: oklch(0.3 0.03 60 / 0.08);
+  --text-1: oklch(0.26 0.02 60);
+  --text-2: oklch(0.5 0.018 62);
+  --text-3: oklch(0.66 0.014 62);
+  --line: oklch(0.3 0.03 60 / 0.08);
+  --line-strong: oklch(0.3 0.03 60 / 0.16);
+  --accent: oklch(0.6 0.095 60);
+  --accent-deep: oklch(0.52 0.095 54);
+  --accent-soft: oklch(0.6 0.095 60 / 0.12);
+  --accent-glow: oklch(0.6 0.095 60 / 0.28);
+  --on-accent: oklch(0.99 0.012 78);
+  --scrim: oklch(0.3 0.02 60 / 0.32);
+  --shadow-pop: 0 24px 64px oklch(0.28 0.03 60 / 0.22), 0 4px 16px oklch(0.28 0.03 60 / 0.12);
+  --shadow-card: 0 1px 2px oklch(0.28 0.03 60 / 0.07);
+  --danger: oklch(0.58 0.18 25);
+  --ok: oklch(0.58 0.15 155);
+  --warn: oklch(0.62 0.13 75);
+  color-scheme: light;
+}
