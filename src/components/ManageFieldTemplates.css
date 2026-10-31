@@ -1,0 +1,19 @@
+
+.kv-manage-row .kv-input.kv-tpl-type {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 100px;
+}
+
+.kv-tpl-protected {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+}
+.kv-tpl-protected:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

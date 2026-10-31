@@ -1,0 +1,284 @@
+
+.kv-settings-section {
+  margin: 22px 4px 8px;
+}
+.kv-settings-section h2 {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0;
+}
+
+.kv-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 4px;
+}
+.kv-settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kv-settings-row-label {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-1);
+}
+.kv-settings-row-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.kv-settings-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+.kv-settings-seg-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.kv-settings-seg-btn:hover {
+  color: var(--text-1);
+}
+.kv-settings-seg-btn.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.kv-settings-seg-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.kv-settings-select-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.kv-settings-select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
+.kv-settings-select {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-1);
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 30px 6px 12px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.kv-settings-select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.kv-settings-note-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kv-settings-warn {
+  margin: 6px 4px 0;
+  padding: 9px 11px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--danger) 36%, var(--line));
+  border-radius: var(--radius-sm);
+}
+
+.kv-settings-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 4px 0;
+}
+.kv-settings-confirm .kv-settings-warn {
+  margin: 0;
+}
+
+.kv-audit-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.kv-audit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.kv-audit-row:last-child {
+  border-bottom: none;
+}
+.kv-audit-event {
+  font-weight: 500;
+}
+.kv-audit-detail {
+  color: var(--text-3);
+  font-size: 0.85em;
+}
+.kv-audit-date {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.kv-nmh-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+.kv-nmh-dot.is-on {
+  background: var(--accent);
+}
+
+.kv-nmh-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.kv-settings .kv-nmh-row-controls .kv-nmh-id {
+  flex: none;
+  width: 220px;
+}
+
+.kv-nmh-grant-group {
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  margin-top: 4px;
+}
+.kv-nmh-grant-group:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.kv-kdbx-modal .kv-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+}
+.kv-kdbx-modal .kv-password-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kv-kdbx-modal .kv-password-field .kv-input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 13px;
+  font-size: 14px;
+}
+
+.kv-settings-hub .kv-settings-inner {
+  max-width: 760px;
+}
+.kv-settings-cols {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+}
+.kv-settings-rail {
+  flex: 0 0 156px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kv-settings-tab {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  text-align: left;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.kv-settings-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.kv-settings-tab.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.kv-settings-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.kv-settings-panel {
+  flex: 1;
+  min-width: 0;
+}
+.kv-settings-panel > .kv-settings-section:first-child {
+  margin-top: 0;
+}
+
+.kv-ai-progress {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+.kv-ai-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+.kv-settings-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.kv-settings-hint-row .kv-settings-row-text {
+  min-width: 0;
+}
+.kv-settings-hint-row .kv-settings-row-hint {
+  overflow-wrap: anywhere;
+}
