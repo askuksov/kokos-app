@@ -1,6 +1,11 @@
+pub mod categorize;
 pub mod download;
 pub mod embed;
+pub mod index;
+pub mod meta;
 pub mod registry;
+pub mod search;
+pub mod store;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AiError {

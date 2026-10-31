@@ -11,6 +11,8 @@ sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 # `ort` is split per target — see the cfg(windows) block at the end of this file.
+kokos-core = { path = "../kokos-core" }
+rusqlite = "0.32"
 
 [dev-dependencies]
 tempfile = "3"
