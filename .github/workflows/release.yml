@@ -3,9 +3,10 @@
 # A pushed tag `vX.Y.Z` builds every platform and attaches the Windows and
 # Linux installers and a SHA256SUMS file to a DRAFT release. Nothing is
 # published automatically. The macOS DMG is signed with the Developer ID and
-# notarized on the maintainer's Mac, so the CI build only proves that macOS
-# still builds and is not attached. Before publishing: add the notarized DMG,
-# regenerate SHA256SUMS, upload its detached signature.
+# notarized on the maintainer's Mac (packaging/macos/build-release.sh
+# --upload <tag> attaches it and updates SHA256SUMS), so the CI build only
+# proves that macOS still builds and is not attached. Before publishing:
+# upload a detached signature of the final SHA256SUMS.
 # A pull request that changes this file runs the builds without a release.
 #
 # No build cache is used: a release of a password manager is built from a
