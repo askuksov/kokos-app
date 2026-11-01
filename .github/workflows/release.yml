@@ -185,9 +185,13 @@ jobs:
         with:
           name: linux
           path: dist
-      - name: Write SHA256SUMS
-        working-directory: dist
+      # The Linux artifact keeps its deb/, rpm/ and appimage/ folders; the
+      # release takes plain files.
+      - name: Collect the files and write SHA256SUMS
         run: |
+          mkdir out
+          find dist -type f -exec mv -n -t out {} +
+          cd out
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
       - name: Create the draft release
@@ -195,4 +199,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
-        run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Kokos $VERSION" --notes "" dist/*
+        run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Kokos $VERSION" --notes "" out/*
