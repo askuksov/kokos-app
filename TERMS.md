@@ -22,17 +22,18 @@ have no right to hold.
 
 Google Drive sync is off unless you turn it on. When enabled, Kokos talks to
 Google on your behalf under your own Google account, and that use is subject to
-Google's terms and policies. The vault is encrypted before it is uploaded; see
-the [privacy policy](PRIVACY.md) for what leaves the device.
+Google's terms and policies. The vault contents are encrypted before upload;
+some header metadata stays readable, and the [privacy policy](PRIVACY.md)
+describes what leaves the device.
 
 Operating-system keychains and any cloud-storage provider you choose are
 governed by their own terms.
 
 ## Changes
 
-These terms may change with the project. The current version is always the one
-in the repository, and continuing to use a release after a change means you
-accept the updated terms.
+These terms may change with the project. Each release is governed by the
+version of these terms published with that release. Continuing to use a release
+means you accept that version.
 
 ## Contact
 
