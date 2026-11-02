@@ -7,6 +7,10 @@
 #                                                     # also attach the DMG to
 #                                                     # that draft release
 #
+# Google Drive: the OAuth client secret is compiled into the app, so the build
+# needs it from KOKOS_GDRIVE_CLIENT_SECRET or the gitignored
+# src-tauri/.gdrive_client_secret. A release build without it is refused.
+#
 # Signing identity: the single "Developer ID Application" identity in the
 # keychain, or APPLE_SIGNING_IDENTITY when there are several.
 #
@@ -60,6 +64,17 @@ if [ -n "$TAG" ]; then
   [ "$remote" = "$(git rev-parse HEAD)" ] || die "tag $TAG on origin points to $remote, not HEAD"
   [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || die "release $TAG is not a draft"
 fi
+
+# The binary reads the secret as a compile-time value; the file fallback it also
+# has only exists in a developer checkout, so a release must embed it here.
+if [ -z "${KOKOS_GDRIVE_CLIENT_SECRET:-}" ]; then
+  secret_file=src-tauri/.gdrive_client_secret
+  [ -f "$secret_file" ] \
+    || die "Google Drive client secret is missing: export KOKOS_GDRIVE_CLIENT_SECRET or write $secret_file"
+  KOKOS_GDRIVE_CLIENT_SECRET=$(tr -d '\r\n' < "$secret_file")
+fi
+[ -n "$KOKOS_GDRIVE_CLIENT_SECRET" ] || die "KOKOS_GDRIVE_CLIENT_SECRET is empty"
+export KOKOS_GDRIVE_CLIENT_SECRET
 
 if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   ids=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | sort -u)

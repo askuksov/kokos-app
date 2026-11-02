@@ -16,25 +16,35 @@ pub const SCOPE: &str = "https://www.googleapis.com/auth/drive.appdata";
 pub const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 
-/// The Desktop-app client secret. Kept OUT of git: read at runtime from the
-/// `KOKOS_GDRIVE_CLIENT_SECRET` env var, else from a gitignored
-/// `<src-tauri>/.gdrive_client_secret` file. Google's token endpoint requires it
-/// even with PKCE (installed-app secret; not confidential per Google). Empty when
-/// neither source is present — the token exchange then fails cleanly.
-/// Note: the file fallback resolves via the compile-time `CARGO_MANIFEST_DIR`
-/// path, which only exists on this build machine's checkout and will not exist
-/// in a distributed/packaged binary — a shipped build must supply the secret
-/// via the `KOKOS_GDRIVE_CLIENT_SECRET` env var (build-time injection is a
-/// packaging concern).
+/// The Desktop-app client secret. Kept OUT of git and resolved from the first
+/// source that yields a non-empty value:
+///
+/// 1. the `KOKOS_GDRIVE_CLIENT_SECRET` runtime env var;
+/// 2. the same variable at build time, embedded by `option_env!` — how release
+///    builds get it, so a shipped binary works on a machine that never sets it;
+/// 3. a gitignored `<src-tauri>/.gdrive_client_secret` file, which only exists
+///    in a developer's checkout and never in a packaged build.
+///
+/// Google's token endpoint requires the secret even with PKCE (installed-app
+/// secret; not confidential per Google). Empty when no source is present — the
+/// token exchange then fails cleanly.
 pub fn client_secret() -> String {
-    if let Ok(s) = std::env::var("KOKOS_GDRIVE_CLIENT_SECRET") {
-        let s = s.trim().to_string();
-        if !s.is_empty() {
-            return s;
-        }
-    }
-    std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/.gdrive_client_secret"))
-        .map(|s| s.trim().to_string())
+    let runtime = std::env::var("KOKOS_GDRIVE_CLIENT_SECRET").ok();
+    let dev_file = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/.gdrive_client_secret")).ok();
+    resolve_client_secret(
+        runtime.as_deref(),
+        option_env!("KOKOS_GDRIVE_CLIENT_SECRET"),
+        dev_file.as_deref(),
+    )
+}
+
+/// Trim each candidate and skip the blank ones, so an empty environment
+/// variable cannot shadow a real source.
+fn resolve_client_secret(runtime: Option<&str>, build_time: Option<&str>, dev_file: Option<&str>) -> String {
+    let clean = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    clean(runtime)
+        .or_else(|| clean(build_time))
+        .or_else(|| clean(dev_file))
         .unwrap_or_default()
 }
 
@@ -186,6 +196,21 @@ mod tests {
         assert!(u.contains("state=STATE"));
         assert!(u.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A5000"));
         assert!(u.contains("access_type=offline"));
+    }
+
+    #[test]
+    fn client_secret_prefers_runtime_then_build_time_then_dev_file() {
+        assert_eq!(resolve_client_secret(Some("runtime"), Some("build"), Some("file")), "runtime");
+        assert_eq!(resolve_client_secret(None, Some("build"), Some("file")), "build");
+        assert_eq!(resolve_client_secret(None, None, Some("file")), "file");
+        assert_eq!(resolve_client_secret(None, None, None), "");
+    }
+
+    #[test]
+    fn blank_client_secret_sources_are_skipped() {
+        assert_eq!(resolve_client_secret(Some("  "), Some("build"), Some("file")), "build");
+        assert_eq!(resolve_client_secret(None, Some("\n"), Some(" file \n")), "file");
+        assert_eq!(resolve_client_secret(Some(""), None, None), "");
     }
 
     #[test]
