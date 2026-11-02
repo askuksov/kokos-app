@@ -232,6 +232,7 @@ mod tests {
             assert!(body.contains("grant_type=authorization_code"));
             assert!(body.contains("code=THECODE"));
             assert!(body.contains("code_verifier=THEVERIFIER"));
+            assert!(body.contains("client_secret="));
             let _ = req.respond(tiny_http::Response::from_string(
                 r#"{"access_token":"AT","refresh_token":"RT","expires_in":3599,"token_type":"Bearer","scope":"x"}"#));
         });
