@@ -1,7 +1,7 @@
 # Security Policy
 
-Kokos guards credentials, so a security report matters more here than almost any
-other kind of issue. Thank you for taking the time.
+Kokos Password Manager guards credentials, so a security report matters more
+here than almost any other kind of issue. Thank you for taking the time.
 
 ## Reporting a vulnerability
 

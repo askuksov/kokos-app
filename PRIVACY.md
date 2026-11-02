@@ -2,10 +2,10 @@
 
 _Last updated: 2026-11-02_
 
-Kokos is a local-first password manager. Your vault is a single encrypted file
-on your own disk. There is no Kokos account, no Kokos server, and no
-subscription. The developer never receives your data, because there is nowhere
-for it to be sent.
+Kokos Password Manager is a local-first password manager. Your vault is a single
+encrypted file on your own disk. There is no Kokos account, no Kokos server, and
+no subscription. The developer never receives your data, because there is
+nowhere for it to be sent.
 
 **One part of the vault file is not encrypted: its header.** The header holds
 bookkeeping a device needs before the file can even be opened — including the

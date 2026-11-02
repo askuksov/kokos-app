@@ -1,9 +1,10 @@
-# Kokos — Threat Model
+# Kokos Password Manager — Threat Model
 
 ## Scope & assumptions
 
-Kokos is a local-first, offline-capable password manager (Rust/Tauri desktop
-app, workspace crates `kokos-core`, `kokos-nmh`, `src-tauri`). It stores an
+Kokos Password Manager is a local-first, offline-capable password manager
+(Rust/Tauri desktop app, workspace crates `kokos-core`, `kokos-nmh`,
+`src-tauri`). It stores an
 encrypted vault file on disk and optionally syncs the ciphertext through a
 folder (iCloud/Dropbox/etc.) or Google Drive, and optionally exposes a
 read/write interface to a companion browser extension via a native-messaging
