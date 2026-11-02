@@ -7,8 +7,10 @@ terms describe what you can expect when you use it.
 
 ## The software
 
-Kokos runs entirely on your device. The author does not operate a service for
-it, there is no account, and no data is sent to the author.
+Kokos runs locally on your device and does not depend on a service operated by
+the author. It has no account, and it does not send data to the author. Optional
+features can contact third-party providers, as the [privacy policy](PRIVACY.md)
+describes.
 
 Kokos is provided "as is", without warranty of any kind. To the fullest extent
 permitted by law, the author is not liable for any damage, data loss, or other
