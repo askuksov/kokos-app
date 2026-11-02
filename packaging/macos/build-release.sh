@@ -51,6 +51,11 @@ if [ -n "$TAG" ]; then
   [ "$TAG" = "v$VERSION" ] || die "tag $TAG does not match version $VERSION"
   git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "no local tag $TAG"
   [ "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG^{commit}")" ] || die "HEAD is not at $TAG"
+  # The draft release is built from the tag on GitHub; it must be this commit
+  # too. For an annotated tag the peeled `^{}` line comes last.
+  remote=$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | awk 'END { print $1 }')
+  [ -n "$remote" ] || die "tag $TAG is not on origin"
+  [ "$remote" = "$(git rev-parse HEAD)" ] || die "tag $TAG on origin points to $remote, not HEAD"
   [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || die "release $TAG is not a draft"
 fi
 
@@ -140,20 +145,40 @@ gatekeeper --type open --context context:primary-signature "$DMG" || die "Gateke
 
 if [ -n "$TAG" ]; then
   echo "== upload to the draft release $TAG"
-  work=$(mktemp -d)
   name=$(basename "$DMG")
-  gh release download "$TAG" --pattern SHA256SUMS --dir "$work"
-  { grep -v "  $name\$" "$work/SHA256SUMS" || true; (cd "$OUT" && shasum -a 256 "$name"); } \
-    | sort -k2 > "$work/SHA256SUMS.new"
-  mv "$work/SHA256SUMS.new" "$work/SHA256SUMS"
-  gh release upload "$TAG" "$DMG" "$work/SHA256SUMS" --clobber
-  cat "$work/SHA256SUMS"
+  work=$(mktemp -d)
+  gh release download "$TAG" --dir "$work"
+  # Keep the release's SHA256SUMS locally: `--clobber` deletes the old asset
+  # before uploading, so a failed upload would otherwise lose it. A rerun
+  # after such a failure falls back to this copy.
+  if [ -f "$work/SHA256SUMS" ]; then
+    cp "$work/SHA256SUMS" "$OUT/SHA256SUMS.release"
+  elif [ -f "$OUT/SHA256SUMS.release" ]; then
+    echo "no SHA256SUMS in $TAG; using the copy kept by an earlier run"
+  else
+    die "no SHA256SUMS in $TAG"
+  fi
+  # Every other asset must still match the hashes the workflow wrote, so the
+  # file the maintainer signs vouches only for what the workflow built.
+  grep -v "  $name\$" "$OUT/SHA256SUMS.release" > "$work/retained" || true
+  [ -s "$work/retained" ] || die "SHA256SUMS of $TAG lists no other assets"
+  (cd "$work" && shasum -a 256 -c "$work/retained") || die "an asset of $TAG does not match SHA256SUMS"
+  for f in "$work"/*; do
+    base=$(basename "$f")
+    case $base in SHA256SUMS|SHA256SUMS.asc|retained|"$name") continue ;; esac
+    grep -q "  $base\$" "$work/retained" || die "$base is attached to $TAG but missing from SHA256SUMS"
+  done
+  { cat "$work/retained"; (cd "$OUT" && shasum -a 256 "$name"); } | sort -k2 > "$OUT/SHA256SUMS"
+  gh release upload "$TAG" "$DMG" --clobber
+  gh release upload "$TAG" "$OUT/SHA256SUMS" --clobber \
+    || die "uploading SHA256SUMS failed; retry: gh release upload $TAG $OUT/SHA256SUMS --clobber"
+  cat "$OUT/SHA256SUMS"
   cat <<NEXT
 
 Uploaded $name and the updated SHA256SUMS. Sign it and upload the signature
 before publishing (an older SHA256SUMS.asc, if any, is now stale):
 
-    gpg --armor --detach-sign $work/SHA256SUMS
-    gh release upload $TAG $work/SHA256SUMS.asc --clobber
+    gpg --armor --detach-sign $OUT/SHA256SUMS
+    gh release upload $TAG $OUT/SHA256SUMS.asc --clobber
 NEXT
 fi
