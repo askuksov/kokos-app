@@ -52,8 +52,10 @@ if [ -n "$TAG" ]; then
   git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "no local tag $TAG"
   [ "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG^{commit}")" ] || die "HEAD is not at $TAG"
   # The draft release is built from the tag on GitHub; it must be this commit
-  # too. For an annotated tag the peeled `^{}` line comes last.
-  remote=$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | awk 'END { print $1 }')
+  # too. ls-remote patterns also match longer names ending in the tag, so
+  # compare full ref names; prefer the peeled `^{}` commit of an annotated tag.
+  remote=$(git ls-remote --tags origin | awk -v t="refs/tags/$TAG" \
+    '$2 == t { c = $1 } $2 == t "^{}" { p = $1 } END { print (p != "" ? p : c) }')
   [ -n "$remote" ] || die "tag $TAG is not on origin"
   [ "$remote" = "$(git rev-parse HEAD)" ] || die "tag $TAG on origin points to $remote, not HEAD"
   [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || die "release $TAG is not a draft"
