@@ -80,6 +80,10 @@ jobs:
       - name: Build the DMG
         env:
           APPLE_SIGNING_IDENTITY: '-'
+          # Embedded at compile time like the other builds. This artifact is a
+          # build check and is not attached to a release; the shipped DMG comes
+          # from packaging/macos/build-release.sh.
+          KOKOS_GDRIVE_CLIENT_SECRET: ${{ secrets.KOKOS_GDRIVE_CLIENT_SECRET }}
         run: npm run tauri build -- --bundles dmg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
