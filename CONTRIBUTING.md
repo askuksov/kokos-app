@@ -1,4 +1,4 @@
-# Contributing to Kokos
+# Contributing to Kokos Password Manager
 
 Thank you for looking at the code. Please read this before opening anything.
 

@@ -2,8 +2,9 @@
 
 _Last updated: 2026-11-02_
 
-Kokos is free software, distributed under the [MIT License](LICENSE). These
-terms describe what you can expect when you use it.
+Kokos Password Manager is free software, distributed under the
+[MIT License](LICENSE). These terms describe what you can expect when you use
+it.
 
 ## The software
 

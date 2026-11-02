@@ -1,6 +1,7 @@
-# Kokos
+# Kokos Password Manager
 
-A local-first, encrypted password manager for the desktop.
+**Kokos Password Manager** is a local-first, encrypted password manager for the
+desktop.
 
 A vault is a single `.kokos` file on your own disk, encrypted with
 XChaCha20-Poly1305 under a key derived from your master password with Argon2id.
