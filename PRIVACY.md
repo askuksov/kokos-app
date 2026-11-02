@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-08-28_
+_Last updated: 2026-11-02_
 
 Kokos is a local-first password manager. Your vault is a single encrypted file
 on your own disk. There is no Kokos account, no Kokos server, and no
@@ -39,6 +39,10 @@ Kokos requests the `drive.appdata` scope only. That scope grants access to an
 application-private folder in your Drive and gives Kokos **no ability to read,
 list, or modify any other file in your Drive**. You can revoke the access at any
 time in your Google Account security settings.
+
+Kokos's use of information received from Google APIs adheres to the
+[Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
+including the Limited Use requirements.
 
 If you instead use the synced-folder option, Kokos writes the encrypted vault to
 a directory you choose. Whatever service syncs that directory — Dropbox,
