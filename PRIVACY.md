@@ -32,8 +32,11 @@ on.
 ### Cloud sync to your own Google Drive
 
 If you enable Google Drive sync, Kokos uploads your **encrypted** vault file to
-your own Google Drive account. The vault is encrypted before it leaves the
-device and Google receives no key.
+your own Google Drive account. The vault contents are encrypted before they
+leave the device and Google receives no key.
+
+To obtain access tokens for Drive sync, Kokos sends the stored Google OAuth
+refresh token to Google's token endpoint.
 
 Kokos requests the `drive.appdata` scope only. That scope grants access to an
 application-private folder in your Drive and gives Kokos **no ability to read,
