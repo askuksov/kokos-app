@@ -38,6 +38,10 @@ leave the device and Google receives no key.
 To obtain access tokens for Drive sync, Kokos sends the stored Google OAuth
 refresh token to Google's token endpoint.
 
+Drive sync also writes the vault file name and your backup note as plaintext
+Drive metadata (`appProperties`). Kokos does not send the decrypted vault
+contents to Google.
+
 Kokos requests the `drive.appdata` scope only. That scope grants access to an
 application-private folder in your Drive and gives Kokos **no ability to read,
 list, or modify any other file in your Drive**. You can revoke the access at any
