@@ -124,10 +124,13 @@ jobs:
           # variable. Google treats an installed-app secret as non-confidential.
           KOKOS_GDRIVE_CLIENT_SECRET: ${{ secrets.KOKOS_GDRIVE_CLIENT_SECRET }}
         run: |
-          if [ -z "$KOKOS_GDRIVE_CLIENT_SECRET" ] && [ "$GITHUB_REF_TYPE" = tag ]; then
-            echo "::error::KOKOS_GDRIVE_CLIENT_SECRET is not set; Drive sync would be broken in this release"
-            exit 1
-          fi
+          case "$KOKOS_GDRIVE_CLIENT_SECRET" in
+            *[![:space:]]*) ;;
+            *) if [ "$GITHUB_REF_TYPE" = tag ]; then
+                 echo "::error::KOKOS_GDRIVE_CLIENT_SECRET is not set; Drive sync would be broken in this release"
+                 exit 1
+               fi ;;
+          esac
           npm run tauri build -- --bundles nsis
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -173,10 +176,13 @@ jobs:
           # variable. Google treats an installed-app secret as non-confidential.
           KOKOS_GDRIVE_CLIENT_SECRET: ${{ secrets.KOKOS_GDRIVE_CLIENT_SECRET }}
         run: |
-          if [ -z "$KOKOS_GDRIVE_CLIENT_SECRET" ] && [ "$GITHUB_REF_TYPE" = tag ]; then
-            echo "::error::KOKOS_GDRIVE_CLIENT_SECRET is not set; Drive sync would be broken in this release"
-            exit 1
-          fi
+          case "$KOKOS_GDRIVE_CLIENT_SECRET" in
+            *[![:space:]]*) ;;
+            *) if [ "$GITHUB_REF_TYPE" = tag ]; then
+                 echo "::error::KOKOS_GDRIVE_CLIENT_SECRET is not set; Drive sync would be broken in this release"
+                 exit 1
+               fi ;;
+          esac
           npm run tauri build -- --bundles deb,rpm,appimage
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

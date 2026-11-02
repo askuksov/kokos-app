@@ -67,14 +67,17 @@ fi
 
 # The binary reads the secret as a compile-time value; the file fallback it also
 # has only exists in a developer checkout, so a release must embed it here.
-if [ -z "${KOKOS_GDRIVE_CLIENT_SECRET:-}" ]; then
+# Mirrors the resolver in oauth.rs: a blank source is no source.
+trim() { local s=${1:-}; s=${s#"${s%%[![:space:]]*}"}; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+secret=$(trim "${KOKOS_GDRIVE_CLIENT_SECRET:-}")
+if [ -z "$secret" ]; then
   secret_file=src-tauri/.gdrive_client_secret
   [ -f "$secret_file" ] \
     || die "Google Drive client secret is missing: export KOKOS_GDRIVE_CLIENT_SECRET or write $secret_file"
-  KOKOS_GDRIVE_CLIENT_SECRET=$(tr -d '\r\n' < "$secret_file")
+  secret=$(trim "$(tr -d '\r\n' < "$secret_file")")
 fi
-[ -n "$KOKOS_GDRIVE_CLIENT_SECRET" ] || die "KOKOS_GDRIVE_CLIENT_SECRET is empty"
-export KOKOS_GDRIVE_CLIENT_SECRET
+[ -n "$secret" ] || die "the Google Drive client secret is blank"
+export KOKOS_GDRIVE_CLIENT_SECRET=$secret
 
 if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   ids=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | sort -u)
