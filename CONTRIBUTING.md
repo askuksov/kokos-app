@@ -40,10 +40,13 @@ Two things to expect:
 
 - A local build is **not byte-identical** to a released binary. The build is not
   reproducible, so a hash comparison against a release will not match.
-- **Google Drive sync will not work in a self-build.** The OAuth client secret
-  is not in the repository. Exercising that code path takes a Google OAuth
-  client of your own: register a Desktop-app client, supply its secret through
-  the `KOKOS_GDRIVE_CLIENT_SECRET` environment variable, and change the
-  `GOOGLE_CLIENT_ID` constant in `src-tauri/src/gdrive/oauth.rs` to that
-  client's id. Changing only the secret does not work — Google's token endpoint
-  rejects a secret that does not belong to the client id sent with it.
+- **Google Drive sync in a self-build takes a client secret of your own.** The
+  OAuth client secret the project uses is not in the repository; released
+  binaries carry it as a compile-time value. Exercising that code path takes a
+  Google OAuth client of your own: register a Desktop-app client, set
+  `KOKOS_GDRIVE_CLIENT_SECRET` to its secret when you run the build (the binary
+  then embeds it), and change the `GOOGLE_CLIENT_ID` constant in
+  `src-tauri/src/gdrive/oauth.rs` to that client's id. A value set only at run
+  time still works, but only on the machine that has it. Changing only the
+  secret does not work — Google's token endpoint rejects a secret that does not
+  belong to the client id sent with it.
