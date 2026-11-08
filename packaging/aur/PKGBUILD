@@ -1,6 +1,6 @@
 # Maintainer: Oleksandr Kuksov
 #
-# Prebuilt package: unpacks the .deb published to packages.kuksov.dev.
+# Prebuilt package: unpacks the .deb attached to the GitHub release.
 # pkgver, _debfile and sha256sums are written by packaging/aur/prepare-release.sh
 # from a real artifact — do not edit them by hand.
 pkgname=kokos-bin
@@ -14,10 +14,10 @@ depends=('webkit2gtk-4.1' 'gtk3')
 provides=('kokos')
 conflicts=('kokos')
 options=('!strip' '!debug')
-_debfile="kokos_0.1.0_amd64.deb"
-source=("kokos-${pkgver}.deb::https://packages.kuksov.dev/deb/pool/main/k/kokos/${_debfile}")
+_debfile="Kokos_0.1.0_amd64.deb"
+source=("kokos-${pkgver}.deb::https://github.com/askuksov/kokos-app/releases/download/v${pkgver}/${_debfile}")
 noextract=("kokos-${pkgver}.deb")
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums=('360ee500191f21c34e241114243d4e0321dcd1e5274236e4050fb85be51c327d')
 
 package() {
   cd "$srcdir"
