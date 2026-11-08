@@ -49,8 +49,8 @@ sum="${sha256sums[0]:-}"
 # never depend on how upstream cased the filename.
 local_name="kokos-${pkgver}.deb"
 case "${source[0]:-}" in
-  "$local_name::https://packages.kuksov.dev/deb/pool/main/k/kokos/"*) ;;
-  *) note "source[0] is not '$local_name::<R2 pool URL>': '${source[0]:-}'" ;;
+  "$local_name::https://github.com/askuksov/kokos-app/releases/download/v${pkgver}/"*) ;;
+  *) note "source[0] is not '$local_name::<GitHub release URL>': '${source[0]:-}'" ;;
 esac
 [ "${noextract[0]:-}" = "$local_name" ] || note "noextract[0] is '${noextract[0]:-}', expected $local_name"
 
