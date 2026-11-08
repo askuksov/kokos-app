@@ -37,8 +37,10 @@ interface. It runs on macOS, Linux and Windows.
 
 ## Install
 
-Releases will be published on the
-[Releases](https://github.com/askuksov/kokos-app/releases) page.
+Download the installer for your platform from the
+[Releases](https://github.com/askuksov/kokos-app/releases) page. Each release is
+checksummed and GPG-signed; see
+[Verifying a release](SECURITY.md#verifying-a-release).
 
 ## Build from source
 

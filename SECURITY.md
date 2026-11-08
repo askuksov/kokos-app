@@ -57,6 +57,35 @@ Other attacks by a same-user process ARE in scope: secrets at rest, secrets
 reaching logs or debug output, and whatever a same-user process can reach
 without the master password. See `docs/THREAT-MODEL.md` for the full model.
 
+## Verifying a release
+
+Every release lists the SHA-256 checksum of each file in `SHA256SUMS`, and
+`SHA256SUMS.asc` is its detached GPG signature. The signing key is:
+
+```
+Oleksandr Kuksov (Kokos releases)
+ed25519, expires 2028-11-07
+A176 4F50 7441 72E0 AECD  1BB7 33B5 8CD5 DEE4 EF2B
+```
+
+The public key is [`KEYS.asc`](KEYS.asc) in this repository and is also served
+at <https://github.com/askuksov.gpg>. Import it, check that the fingerprint
+matches the one above, then verify the checksum file and your download:
+
+```sh
+curl -sL https://github.com/askuksov.gpg | gpg --import
+gpg --fingerprint A1764F50744172E0AECD1BB733B58CD5DEE4EF2B
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing   # shasum -a 256 -c on macOS
+```
+
+GPG warns that the key is not certified by a trusted signature; that is expected
+for a new key, and the fingerprint is what you compare. If the fingerprint or the
+signature does not match, do not install the file and report it privately as
+described above. The signature shows that the checksum file comes from the
+maintainer. It does not replace operating-system code signing, which the Scope
+section covers.
+
 ## Dependency audit
 
 `npm audit` is usually the first command run after cloning this repository.
