@@ -4,7 +4,7 @@
 //! PKCE protects the auth code, but Google's token endpoint still rejects the
 //! exchange without the client_secret ("client_secret is missing"), so we send
 //! it too. The client_id is embedded (non-sensitive); the client_secret is kept
-//! OUT of git and loaded at runtime (see `client_secret()`).
+//! OUT of git and compiled into release builds (see `client_secret()`).
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sha2::{Digest, Sha256};
