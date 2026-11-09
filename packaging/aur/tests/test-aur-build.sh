@@ -69,8 +69,8 @@ recipe_sum="${sha256sums[0]:-}"
 # the local-copy bypass below means makepkg in this test never downloads, so a
 # wrong URL (e.g. a casing mismatch against what the pool actually published)
 # would otherwise sail through every check in this file. --no-url-check exists
-# for synthetic fixtures (packaging/repo/tests/make-fixture.sh) that are never
-# published to R2 under this name, so there is nothing real to fetch.
+# for synthetic fixtures that are never published under this name, so there is
+# nothing real to fetch.
 if [ "$NO_URL_CHECK" -eq 1 ]; then
   echo "NOTE: --no-url-check set — skipping the source-URL fetch (fixture run)."
 else
