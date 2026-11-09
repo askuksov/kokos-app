@@ -54,7 +54,7 @@ done
 # be lowercase; if the rpm disagrees, the README must say what the rpm says.
 [ "$deb_name" = "kokos" ] || { echo "FAIL: deb Package is '$deb_name', expected 'kokos'"; fail=1; }
 if [ "$rpm_name" != "kokos" ]; then
-  echo "NOTE: rpm package name is '$rpm_name' — README and kokos.repo must use it verbatim"
+  echo "NOTE: rpm package name is '$rpm_name' — README and the install commands on packages.kuksov.dev must use it verbatim"
 fi
 
 [ "$fail" -eq 0 ] && echo "PASS: metadata floor declared"

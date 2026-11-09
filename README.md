@@ -42,6 +42,25 @@ Download the installer for your platform from the
 checksummed and GPG-signed; see
 [Verifying a release](SECURITY.md#verifying-a-release).
 
+On Linux (x86_64, glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) you can
+also install from the apt or dnf repository and get updates with the system:
+
+```sh
+# Debian / Ubuntu
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/kuksov.gpg https://packages.kuksov.dev/kuksov-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/kuksov.gpg] https://packages.kuksov.dev/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/kuksov.list
+sudo apt update && sudo apt install kokos
+
+# Fedora
+sudo curl -fsSLo /etc/yum.repos.d/kuksov.repo https://packages.kuksov.dev/rpm/kuksov.repo
+sudo dnf install kokos
+```
+
+The repository and its signing key are described at
+[askuksov/packages](https://github.com/askuksov/packages).
+
 ## Build from source
 
 You need Rust (stable), Node.js 20.19 or later, and the
