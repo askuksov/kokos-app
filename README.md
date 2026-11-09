@@ -47,14 +47,25 @@ also install from the apt or dnf repository and get updates with the system:
 
 ```sh
 # Debian / Ubuntu
+sudo apt install -y curl
 sudo install -d -m 0755 /etc/apt/keyrings
 sudo curl -fsSLo /etc/apt/keyrings/kuksov.gpg https://packages.kuksov.dev/kuksov-archive-keyring.gpg
+gpg --show-keys /etc/apt/keyrings/kuksov.gpg   # must show EED9 1C1A 7BF9 745A 985C  19AA D63F 9938 F413 FDE5
 echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/kuksov.gpg] https://packages.kuksov.dev/deb stable main" \
   | sudo tee /etc/apt/sources.list.d/kuksov.list
 sudo apt update && sudo apt install kokos
 
 # Fedora
-sudo curl -fsSLo /etc/yum.repos.d/kuksov.repo https://packages.kuksov.dev/rpm/kuksov.repo
+sudo tee /etc/yum.repos.d/kuksov.repo >/dev/null <<'EOF'
+[kuksov]
+name=kuksov.dev packages
+baseurl=https://packages.kuksov.dev/rpm/stable/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.kuksov.dev/kuksov-archive-keyring.asc
+metadata_expire=6h
+EOF
 sudo dnf install kokos
 ```
 
