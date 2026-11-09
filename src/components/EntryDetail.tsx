@@ -4,6 +4,7 @@ import { useClipboard } from "../state/ClipboardContext";
 import { useSettings } from "../state/SettingsContext";
 import { useT, useLang } from "../state/LangContext";
 import type { Lang } from "../lib/i18n";
+import { monogram } from "../lib/monogram";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   addEntryTag,
@@ -366,20 +367,6 @@ function formatDate(unixSeconds: number, lang: Lang): string {
   );
 }
 
-function hashTitle(str: string): number {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return h;
-}
-
-function monogram(title: string): { letter: string; bg: string } {
-  const hue = hashTitle(title || "?") % 360;
-  return {
-    letter: (title || "?").trim().charAt(0).toUpperCase(),
-    bg: `linear-gradient(135deg, oklch(0.62 0.13 ${hue}), oklch(0.48 0.15 ${(hue + 45) % 360}))`,
-  };
-}
-
 function Monogram({ title }: { title: string }) {
   const m = monogram(title);
   return (
@@ -579,9 +566,9 @@ function withKey(prev: Set<string>, key: string, present: boolean): Set<string> 
 
 /**
  * Right-panel entry detail. Layout: a `.kv-detail-bar` (favorite star,
- * icon-only Delete, Edit), a header (hash-colored monogram duplicated from
- * EntryList.tsx's avatar, title, and a `.kv-entry-meta` line with type, folder
- * and absolute "Edited {date}"), then the cards: fields, notes, tags,
+ * icon-only Delete, Edit), a header (hash-colored monogram shared with
+ * EntryList.tsx via lib/monogram.ts, title, and a `.kv-entry-meta` line with
+ * type, folder and absolute "Edited {date}"), then the cards: fields, notes, tags,
  * attachments, linked entries, and a created/modified/strength meta grid.
  * Notes and attachments cards are hidden when empty; the tags card also shows
  * when AI suggestions are enabled. URL fields render their value as plain
