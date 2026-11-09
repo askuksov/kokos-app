@@ -8,22 +8,9 @@ import type { TFn } from "../lib/i18n";
 import type { EntrySummary, FolderNode, Tag, View } from "../ipc/types";
 import { tagColor } from "../lib/tagColors";
 import { entryTypeMeta } from "../lib/entryTypes";
+import { monogram } from "../lib/monogram";
 import { useClipboard } from "../state/ClipboardContext";
 import "./EntryList.css";
-
-function hashTitle(str: string): number {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return h;
-}
-
-function monogram(title: string): { letter: string; bg: string } {
-  const hue = hashTitle(title || "?") % 360;
-  return {
-    letter: (title || "?").trim().charAt(0).toUpperCase(),
-    bg: `linear-gradient(135deg, oklch(0.62 0.13 ${hue}), oklch(0.48 0.15 ${(hue + 45) % 360}))`,
-  };
-}
 
 function Monogram({ title }: { title: string }) {
   const m = monogram(title);
