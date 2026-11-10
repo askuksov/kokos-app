@@ -47,7 +47,7 @@ also install from the apt or dnf repository and get updates with the system:
 
 ```sh
 # Debian / Ubuntu
-sudo apt install -y curl
+sudo apt install -y curl gpg
 sudo install -d -m 0755 /etc/apt/keyrings
 sudo curl -fsSLo /etc/apt/keyrings/kuksov.gpg https://packages.kuksov.dev/kuksov-archive-keyring.gpg
 gpg --show-keys /etc/apt/keyrings/kuksov.gpg   # must show EED9 1C1A 7BF9 745A 985C  19AA D63F 9938 F413 FDE5
@@ -66,7 +66,7 @@ repo_gpgcheck=1
 gpgkey=https://packages.kuksov.dev/kuksov-archive-keyring.asc
 metadata_expire=6h
 EOF
-sudo dnf install kokos
+sudo dnf install kokos   # accept the key only if it shows EED9 1C1A 7BF9 745A 985C  19AA D63F 9938 F413 FDE5
 ```
 
 The repository and its signing key are described at
