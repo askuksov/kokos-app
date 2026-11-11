@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useT } from "../state/LangContext";
 import { nmhConfirmReply } from "../ipc/commands";
+import { CountdownRing } from "./CountdownRing";
 import "./NmhConfirm.css";
 
 type NmhConfirmRequest = {
@@ -13,7 +14,11 @@ type NmhConfirmRequest = {
   field: string | null;
   mode: string;
   session_minutes: number;
+  timeout_secs?: number;
 };
+
+// Fallback when an older backend sends no timeout_secs (its deadline was 60 s).
+const DEFAULT_TIMEOUT_SECS = 60;
 
 type NmhConfirmCancel = { req_id: string | null };
 
@@ -31,6 +36,7 @@ export function NmhConfirm() {
   const denyRef = useRef<HTMLButtonElement | null>(null);
   const allowRef = useRef<HTMLButtonElement | null>(null);
   const [remember, setRemember] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(DEFAULT_TIMEOUT_SECS);
   const rememberRef = useRef<HTMLInputElement | null>(null);
 
   function replyOnce(id: string, allowed: boolean) {
@@ -79,6 +85,18 @@ export function NmhConfirm() {
 
   useEffect(() => {
     setRemember(false);
+  }, [req?.req_id]);
+
+  // Count down to the backend's auto-deny. The backend closes the prompt itself
+  // (nmh-confirm-cancel) when the time is up; this only shows how long is left.
+  useEffect(() => {
+    if (!req) return;
+    const total = req.timeout_secs ?? DEFAULT_TIMEOUT_SECS;
+    const deadline = Date.now() + total * 1000;
+    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 250);
+    return () => window.clearInterval(timer);
   }, [req?.req_id]);
 
   useEffect(() => {
@@ -175,7 +193,10 @@ export function NmhConfirm() {
           {isRead && req.mode === "always" && (
             <p className="kv-nmh-hint">{t("nmh.alwaysModeHint")}</p>
           )}
-          <p className="kv-nmh-hint">{t("nmh.expiresHint")}</p>
+          <p className="kv-nmh-hint kv-nmh-expires">
+            <span>{t("nmh.expiresIn")}</span>
+            <CountdownRing remaining={secondsLeft} total={req.timeout_secs ?? DEFAULT_TIMEOUT_SECS} />
+          </p>
         </div>
         <div className="kv-modal-footer">
           <button type="button" className="kv-btn is-primary" ref={denyRef} onClick={() => close(false)}>

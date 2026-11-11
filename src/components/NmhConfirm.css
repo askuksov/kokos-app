@@ -27,3 +27,9 @@
   color: var(--text-1);
   cursor: pointer;
 }
+
+.kv-nmh-expires {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

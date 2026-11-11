@@ -1,0 +1,19 @@
+.kv-ring {
+  flex: none;
+}
+
+.kv-ring-track {
+  stroke: var(--line-strong);
+}
+
+.kv-ring-fill {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 0.2s linear;
+}
+
+.kv-ring-label {
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font);
+  fill: var(--text-2);
+}

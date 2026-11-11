@@ -702,7 +702,7 @@ export const en: Record<string, string> = {
   "nmh.allow": "Allow",
   "nmh.deny": "Deny",
   "nmh.grantHint": "Allowing also lets this extension read other logins for {domain} for {minutes} min without asking.",
-  "nmh.expiresHint": "Denied automatically after 60 seconds.",
+  "nmh.expiresIn": "Denied automatically in",
   "nmh.alwaysModeHint": "Kokos asks every time. To be asked less often, change \"Ask before revealing\" in Settings ▸ Browser integration.",
   "nmh.rememberSite": "Remember this site",
   "nmh.rememberHint": "This extension will read logins for {domain} without asking, until you revoke it in Settings.",
