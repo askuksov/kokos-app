@@ -759,6 +759,13 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
     }
 
     let (req_id, rx) = st.nmh.confirms.open();
+    // Wall-clock deadline for the webview's countdown, so a late-handled event
+    // does not restart a full countdown after the wait below has begun.
+    let expires_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+        + CONFIRM_TIMEOUT_SECS * 1000;
     let emitted = app.emit(
         "nmh-confirm-request",
         serde_json::json!({
@@ -771,6 +778,7 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
             "mode": mode,
             "session_minutes": minutes,
             "timeout_secs": CONFIRM_TIMEOUT_SECS,
+            "expires_at_ms": expires_at_ms,
         }),
     );
     if emitted.is_err() {
