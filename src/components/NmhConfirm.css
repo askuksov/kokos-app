@@ -33,3 +33,7 @@
   align-items: center;
   gap: 8px;
 }
+
+.kv-nmh-expires [role="timer"] {
+  display: inline-flex;
+}

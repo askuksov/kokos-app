@@ -15,6 +15,7 @@ type NmhConfirmRequest = {
   mode: string;
   session_minutes: number;
   timeout_secs?: number;
+  expires_at_ms?: number;
 };
 
 // Fallback when an older backend sends no timeout_secs (its deadline was 60 s).
@@ -92,7 +93,10 @@ export function NmhConfirm() {
   useEffect(() => {
     if (!req) return;
     const total = req.timeout_secs ?? DEFAULT_TIMEOUT_SECS;
-    const deadline = Date.now() + total * 1000;
+    // The backend's deadline when present (same machine clock); never later
+    // than a full countdown from now.
+    const local = Date.now() + total * 1000;
+    const deadline = req.expires_at_ms ? Math.min(req.expires_at_ms, local) : local;
     const tick = () => setSecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
     tick();
     const timer = window.setInterval(tick, 250);
@@ -195,7 +199,9 @@ export function NmhConfirm() {
           )}
           <p className="kv-nmh-hint kv-nmh-expires">
             <span>{t("nmh.expiresIn")}</span>
-            <CountdownRing remaining={secondsLeft} total={req.timeout_secs ?? DEFAULT_TIMEOUT_SECS} />
+            <span role="timer" aria-label={t("nmh.secondsLeft", { seconds: secondsLeft })}>
+              <CountdownRing remaining={secondsLeft} total={req.timeout_secs ?? DEFAULT_TIMEOUT_SECS} />
+            </span>
           </p>
         </div>
         <div className="kv-modal-footer">
