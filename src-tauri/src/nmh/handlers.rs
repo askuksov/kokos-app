@@ -664,6 +664,10 @@ fn grant_ttl(minutes: u32) -> std::time::Duration {
 /// extension can push into the WebView via save_login. Generous for real logins.
 const MAX_CONFIRM_FIELD_CHARS: usize = 256;
 
+/// How long the confirm prompt waits for the user before denying. Sent to the
+/// webview as `timeout_secs` so its countdown matches this deadline.
+const CONFIRM_TIMEOUT_SECS: u64 = 60;
+
 /// Truncate to at most `max_chars` Unicode scalar values on a char boundary
 /// (never splits a multi-byte char, always valid UTF-8). Display-only bound for
 /// the confirm-request event payload; does not touch stored vault values.
@@ -766,6 +770,7 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
             "field": r.field,
             "mode": mode,
             "session_minutes": minutes,
+            "timeout_secs": CONFIRM_TIMEOUT_SECS,
         }),
     );
     if emitted.is_err() {
@@ -780,7 +785,7 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
     let _ = w.set_focus();
     let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
 
-    let answer = match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+    let answer = match rx.recv_timeout(std::time::Duration::from_secs(CONFIRM_TIMEOUT_SECS)) {
         Ok(v) => v,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             st.nmh.confirms.forget(&req_id);

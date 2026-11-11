@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { totpCode } from "../ipc/commands";
 import { useClipboard } from "../state/ClipboardContext";
 import { useT } from "../state/LangContext";
+import { CountdownRing } from "./CountdownRing";
 import "./TotpField.css";
 
 type TotpIcon = "shield" | "copy" | "check";
@@ -51,9 +52,6 @@ interface TotpState {
   remaining: number;
   period: number;
 }
-
-const RING_R = 9;
-const RING_C = 2 * Math.PI * RING_R;
 
 function groupCode(code: string): string {
   const mid = Math.ceil(code.length / 2);
@@ -178,9 +176,6 @@ export function TotpField({
     }
   }
 
-  const frac = state && state.period > 0 ? state.remaining / state.period : 0;
-  const dashOffset = RING_C * (1 - frac);
-
   return (
     <div className="kv-field">
       <Icon name="shield" size={16} className="kv-field-icon" />
@@ -192,24 +187,7 @@ export function TotpField({
           ) : state ? (
             <div className="kv-totp-row">
               <span className="kv-totp-code">{groupCode(state.code)}</span>
-              <svg className="kv-totp-ring" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
-                <circle className="kv-totp-ring-track" cx="12" cy="12" r={RING_R} fill="none" strokeWidth="2.2" />
-                <circle
-                  className="kv-totp-ring-fill"
-                  cx="12"
-                  cy="12"
-                  r={RING_R}
-                  fill="none"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeDasharray={RING_C}
-                  strokeDashoffset={dashOffset}
-                  transform="rotate(-90 12 12)"
-                />
-                <text x="12" y="12" className="kv-totp-ring-label" textAnchor="middle" dominantBaseline="central">
-                  {state.remaining}
-                </text>
-              </svg>
+              <CountdownRing remaining={state.remaining} total={state.period} />
             </div>
           ) : (
             <span className="kv-field-empty">—</span>
