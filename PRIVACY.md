@@ -118,6 +118,12 @@ The extension stores two lists in the browser's local extension storage: the
 sites you enabled and the sites where you turned off save offers. It stores no
 password, username or other secret. Removing the extension removes both lists.
 
+Browser stores call this handling of authentication information and browsing
+activity, and the extension declares both. The data is used only to fill and
+save your logins, is never sold, and is never used for advertising or any other
+purpose. The use of information received by the extension complies with the
+Chrome Web Store User Data Policy, including the Limited Use requirements.
+
 ## Where your data lives
 
 | Data | Location |
