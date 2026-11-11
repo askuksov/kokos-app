@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-11-02_
+_Last updated: 2026-11-11_
 
 Kokos Password Manager is a local-first password manager. Your vault is a single
 encrypted file on your own disk. There is no Kokos account, no Kokos server, and
@@ -89,11 +89,34 @@ service.
 
 ### The browser extension
 
-The Kokos browser extension talks to the desktop application over a local
-native-messaging channel on your own machine. The native-messaging host that
-serves it has no network capability at all — it carries no HTTP client and
-cannot make an outbound request even in principle. The extension sends nothing to
-the developer or to any third party.
+The Kokos browser extension (for Chrome and Firefox) talks to the desktop
+application over a local native-messaging channel on your own machine. The
+native-messaging host that serves it has no network capability at all — it
+carries no HTTP client and cannot make an outbound request even in principle.
+The extension itself makes no network request either, and sends nothing to the
+developer or to any third party.
+
+What the extension reads, and where it goes:
+
+- **The address of the active tab.** It is read when you switch tabs or open the
+  extension, to show whether Kokos is enabled on that site and to look up
+  matching logins. It is passed only to the Kokos app on your machine.
+- **Login forms on sites you enabled.** The extension runs on a site only after
+  you enable it there, one site at a time. On those sites it reads the username
+  and password you submit, to offer saving them, and writes a login into the
+  form when you ask it to fill. A submitted login is held in the extension's
+  memory until you save it or dismiss the offer, and for two minutes at most,
+  then passed to the Kokos app or discarded. So that it does not offer the same
+  login twice, the extension remembers the site, the username and a short
+  checksum of the password, at most until the browser closes; this record is never
+  written to disk.
+- **Logins from your vault.** Usernames, passwords and one-time codes come only
+  from the Kokos app. By default the app asks you to confirm before it reveals a
+  password or code to the extension.
+
+The extension stores two lists in the browser's local extension storage: the
+sites you enabled and the sites where you turned off save offers. It stores no
+password, username or other secret. Removing the extension removes both lists.
 
 ## Where your data lives
 
@@ -104,6 +127,7 @@ the developer or to any third party.
 | Master password, if you enable convenience unlock | your operating system's keychain or credential store, under your OS account's protection |
 | Google Drive refresh token, if you enable Drive sync | your operating system's keychain or credential store |
 | Application settings, the full paths to your open and recent vault files, and any browser-extension ids you've approved | your operating system's standard application-configuration directory |
+| The sites you enabled in the browser extension, and the sites where you turned off its save offers | the browser's local storage for the extension |
 | Sync bookkeeping — the synced folder's path, or your Drive backup's file reference and any note you typed for it — if you enable sync | your operating system's standard application-configuration directory |
 | How many times a failed unlock attempt happened recently, and when | your operating system's standard application-configuration directory, deliberately kept outside the vault — the vault is still locked when an attempt fails, so it cannot be written there |
 | The activity log of what happened inside a vault (unlocks, entry changes, and similar events) | inside your encrypted vault |
