@@ -375,9 +375,10 @@ fn block_message(code: &str) -> &'static str {
 }
 
 /// The site's logins from every unlocked vault, active first, each paired
-/// with the vault it came from. Capped at `MAX_ITEMS` in total. An entry id
-/// already taken from an earlier vault is skipped, so each id maps to exactly
-/// one vault. Errs with the wire code when no vault can be read (see
+/// with the vault it came from. Capped at `MAX_ITEMS` unique entries in
+/// total. An entry id already taken from an earlier vault is skipped, so each
+/// id maps to exactly one vault. Each vault is asked for a full `MAX_ITEMS`
+/// so a duplicate cannot use up the room a new match needs. Errs with the wire code when no vault can be read (see
 /// `cross_vault_block`) or a read fails.
 fn logins_across_vaults(
     reg: &mut crate::session_registry::SessionRegistry,
@@ -389,16 +390,19 @@ fn logins_across_vaults(
         return Err(code);
     }
     let mut hits: Vec<(String, kokos_core::logins::LoginMatch)> = Vec::new();
-    for (vid, state) in &states {
-        if *state != VaultState::Open || hits.len() >= MAX_ITEMS {
+    'vaults: for (vid, state) in &states {
+        if *state != VaultState::Open {
             continue;
         }
         let Some(v) = reg.get(vid).and_then(|s| s.vault.as_ref()) else {
             continue;
         };
-        let found = kokos_core::logins::for_url(&v.conn, url, MAX_ITEMS - hits.len())
-            .map_err(|_| codes::INTERNAL)?;
+        let found =
+            kokos_core::logins::for_url(&v.conn, url, MAX_ITEMS).map_err(|_| codes::INTERNAL)?;
         for h in found {
+            if hits.len() >= MAX_ITEMS {
+                break 'vaults;
+            }
             if !hits.iter().any(|(_, seen)| seen.id == h.id) {
                 hits.push((vid.clone(), h));
             }
@@ -978,9 +982,11 @@ fn confirm_answer(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> super::grants::C
         },
     };
     let allowed = answer.allowed;
-    // A pick only means something on an approval of a prompt that offered one.
+    // A pick only means something on an approved save. It is kept even when
+    // no picker was shown, so `save_target` can refuse it instead of the pick
+    // quietly turning into "use the default".
     let answer = super::grants::ConfirmAnswer {
-        vault_id: if allowed && !r.vault_choices.is_empty() { answer.vault_id } else { None },
+        vault_id: if allowed && r.action == "save_login" { answer.vault_id } else { None },
         ..answer
     };
 
@@ -1602,6 +1608,18 @@ fn save_choices(states: &[(String, VaultState)]) -> Vec<VaultChoice> {
         .collect()
 }
 
+/// Adds the tabs restored locked at launch (`AppState::restored_locked`, not
+/// in the registry until first unlocked) to the picker list as locked, after
+/// the registry's vaults and without repeating an id.
+fn with_restored_locked(mut choices: Vec<VaultChoice>, restored: &[String]) -> Vec<VaultChoice> {
+    for id in restored {
+        if !choices.iter().any(|c| &c.id == id) {
+            choices.push(VaultChoice { id: id.clone(), locked: true });
+        }
+    }
+    choices
+}
+
 /// Where a save goes when the human picks nothing: the first unlocked choice.
 /// `choices` is in `vault_order`, so that is the active vault when it is
 /// unlocked. `None` when every open vault is locked (or none is open).
@@ -1654,6 +1672,10 @@ pub fn save_login(app: &tauri::AppHandle, req: &Request, origin: &str) -> Respon
         };
         save_choices(&vault_states(&mut reg))
     };
+    // Tabs restored locked at launch stay outside the registry until their
+    // first unlock; list them too (taken after the sessions guard is dropped).
+    let restored = st.restored_locked.lock().map(|g| g.clone()).unwrap_or_default();
+    let choices = with_restored_locked(choices, &restored);
     let Some(default_vault) = default_save_target(&choices) else {
         return if choices.is_empty() {
             Response::err(&req.id, codes::NO_VAULT, "no vault is open")
@@ -2421,6 +2443,21 @@ mod tests {
         assert_eq!(
             save_choices(&states),
             vec![choice("/a", false), choice("/b", true), choice("/c", false)]
+        );
+    }
+
+    #[test]
+    fn restored_locked_tabs_join_the_picker_as_locked_once() {
+        let choices = vec![choice("/a", false), choice("/b", true)];
+        assert_eq!(
+            with_restored_locked(choices, &ids(&["/b", "/c"])),
+            vec![choice("/a", false), choice("/b", true), choice("/c", true)],
+            "a restored tab already in the registry is not listed twice"
+        );
+        assert_eq!(
+            default_save_target(&with_restored_locked(vec![], &ids(&["/c"]))),
+            None,
+            "only restored locked tabs: nothing to save into, but the list is not empty"
         );
     }
 
