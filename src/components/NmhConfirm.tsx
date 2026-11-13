@@ -44,6 +44,13 @@ function vaultLabels(choices: VaultChoice[]): Map<string, string> {
     }
     labels.set(c.id, c.id);
   });
+  // Labels found at different depths can still match (`/c/logins (a).kokos`
+  // vs `/a/logins.kokos`); any label still shared falls back to the path.
+  const seen = new Map<string, number>();
+  labels.forEach((l) => seen.set(l, (seen.get(l) ?? 0) + 1));
+  labels.forEach((l, id) => {
+    if ((seen.get(l) ?? 0) > 1) labels.set(id, id);
+  });
   return labels;
 }
 
