@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useVault } from "../state/VaultContext";
 import { useSettings } from "../state/SettingsContext";
@@ -907,6 +907,10 @@ export function Settings() {
   const [nmhErr, setNmhErr] = useState<string | null>(null);
   const [chromeId, setChromeId] = useState(CHROME_STORE_ID);
   const [firefoxId, setFirefoxId] = useState(FIREFOX_STORE_ID);
+  // Whether the ID fields have been filled from a real status yet. Until then
+  // any successful refresh fills them, so a failed first load cannot leave
+  // the store IDs standing in for a registered custom ID.
+  const nmhSeededRef = useRef(false);
 
   const [hibpBusy, setHibpBusy] = useState(false);
 
@@ -925,10 +929,12 @@ export function Settings() {
   const [genProgress, setGenProgress] = useState<{ what: string; downloaded: number; total: number } | null>(null);
   const textImport = useTextImport();
 
-  const refreshNmh = async (seed?: "chrome" | "firefox" | "both") => {
+  const refreshNmh = async (want?: "chrome" | "firefox" | "both") => {
     try {
       const st = await nmhStatus();
       setNmhSt(st);
+      const seed = nmhSeededRef.current ? want : "both";
+      nmhSeededRef.current = true;
       // No registered ID yet (or just removed): offer the store ID.
       if (seed === "both" || seed === "chrome") setChromeId(st.chrome_ids[0] ?? CHROME_STORE_ID);
       if (seed === "both" || seed === "firefox") setFirefoxId(st.firefox_ids[0] ?? FIREFOX_STORE_ID);
@@ -2069,7 +2075,15 @@ export function Settings() {
                         type="button"
                         className="kv-btn is-ghost"
                         disabled={nmhBusy}
-                        onClick={() => row.setId(row.storeId)}
+                        onClick={(e) => {
+                          // The button disappears once the field holds the
+                          // store ID; keep keyboard focus on the field.
+                          const input = e.currentTarget.parentElement?.querySelector<HTMLInputElement>(
+                            "input.kv-nmh-id",
+                          );
+                          row.setId(row.storeId);
+                          input?.focus();
+                        }}
                       >
                         {t("settings.nmhUseStoreId")}
                       </button>
