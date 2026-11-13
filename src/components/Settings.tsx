@@ -911,6 +911,8 @@ export function Settings() {
   // any successful refresh fills them, so a failed first load cannot leave
   // the store IDs standing in for a registered custom ID.
   const nmhSeededRef = useRef(false);
+  // Fields the user typed into before that first fill; it leaves them alone.
+  const nmhEditedRef = useRef({ chrome: false, firefox: false });
 
   const [hibpBusy, setHibpBusy] = useState(false);
 
@@ -933,11 +935,14 @@ export function Settings() {
     try {
       const st = await nmhStatus();
       setNmhSt(st);
-      const seed = nmhSeededRef.current ? want : "both";
+      const first = !nmhSeededRef.current;
+      const seed = first ? "both" : want;
       nmhSeededRef.current = true;
+      const fill = (b: "chrome" | "firefox") =>
+        (seed === "both" || seed === b) && !(first && nmhEditedRef.current[b]);
       // No registered ID yet (or just removed): offer the store ID.
-      if (seed === "both" || seed === "chrome") setChromeId(st.chrome_ids[0] ?? CHROME_STORE_ID);
-      if (seed === "both" || seed === "firefox") setFirefoxId(st.firefox_ids[0] ?? FIREFOX_STORE_ID);
+      if (fill("chrome")) setChromeId(st.chrome_ids[0] ?? CHROME_STORE_ID);
+      if (fill("firefox")) setFirefoxId(st.firefox_ids[0] ?? FIREFOX_STORE_ID);
     } catch {
       setNmhErr(t("settings.nmhGenericError"));
     }
@@ -2064,7 +2069,10 @@ export function Settings() {
                       className="kv-input kv-nmh-id"
                       aria-label={row.label}
                       value={row.id}
-                      onChange={(e) => row.setId(e.target.value)}
+                      onChange={(e) => {
+                        nmhEditedRef.current[row.browser] = true;
+                        row.setId(e.target.value);
+                      }}
                       disabled={nmhBusy}
                       autoCapitalize="off"
                       autoCorrect="off"
