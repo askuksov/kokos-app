@@ -185,7 +185,7 @@ function TrashRow({
  * Restore, …), so it never lingers silently armed.
  */
 export function Trash() {
-  const { refreshEntries, refreshFolders, refreshTags, setRoute } = useVault();
+  const { vaultId, refreshEntries, refreshFolders, refreshTags, setRoute } = useVault();
   const t = useT();
   const [items, setItems] = useState<TrashItem[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -208,11 +208,11 @@ export function Trash() {
 
   const load = useCallback(async () => {
     try {
-      setItems(await listTrash());
+      setItems(await listTrash(vaultId));
     } catch (e) {
       console.error("list_trash failed:", e);
     }
-  }, []);
+  }, [vaultId]);
 
   useEffect(() => {
     load();
@@ -231,7 +231,7 @@ export function Trash() {
     setConfirmingEmpty(false);
     setBusyId(id);
     try {
-      await restoreEntry(id);
+      await restoreEntry(id, vaultId);
       await afterAction();
     } catch (e) {
       console.error("restore_entry failed:", e);
@@ -254,7 +254,7 @@ export function Trash() {
     setConfirmingId(null);
     setBusyId(id);
     try {
-      await permanentDeleteEntry(id);
+      await permanentDeleteEntry(id, vaultId);
       await afterAction();
     } catch (e) {
       console.error("permanent_delete_entry failed:", e);
@@ -277,7 +277,7 @@ export function Trash() {
     setConfirmingEmpty(false);
     setEmptying(true);
     try {
-      await emptyTrash();
+      await emptyTrash(vaultId);
       await afterAction();
     } catch (e) {
       console.error("empty_trash failed:", e);

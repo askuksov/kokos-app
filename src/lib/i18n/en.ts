@@ -354,6 +354,7 @@ export const en: Record<string, string> = {
   "settings.exportCopyBtn": "Export copy",
   "settings.exportDone": "Exported {count} entries.",
   "settings.exportCopyDone": "Encrypted copy saved.",
+  "settings.exportFailed": "Export failed: {error}",
   "settings.importJsonLabel": "Import from JSON",
   "settings.importJsonHint": "Merge a Kokos export into this vault. Existing entries are never overwritten.",
   "settings.importJsonBtn": "Import JSON",

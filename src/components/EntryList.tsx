@@ -127,6 +127,7 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
     refreshFolders,
     refreshTags,
     setSaveError,
+    vaultId,
   } = useVault();
 
   const { copySecret, copyEpoch } = useClipboard();
@@ -279,7 +280,7 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
     try {
       const path = await pickSavePath("kokos-selected.json");
       if (!path) return;
-      await exportJson(path, ids());
+      await exportJson(path, ids(), vaultId);
       await refreshSettings();
       setExportDone(true);
       setTimeout(() => setExportDone(false), 1400);

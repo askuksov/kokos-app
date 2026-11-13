@@ -354,6 +354,7 @@ export const ru: Record<string, string> = {
   "settings.exportCopyBtn": "Экспорт копии",
   "settings.exportDone": "Экспортировано записей: {count}.",
   "settings.exportCopyDone": "Зашифрованная копия сохранена.",
+  "settings.exportFailed": "Экспорт не удался: {error}",
   "settings.importJsonLabel": "Импорт из JSON",
   "settings.importJsonHint": "Слить экспорт Kokos в это хранилище. Существующие записи не перезатираются.",
   "settings.importJsonBtn": "Импорт JSON",

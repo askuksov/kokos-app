@@ -816,19 +816,27 @@ export function Settings() {
 
   async function doExportJson() {
     setExportWarnOpen(false);
-    const path = await pickSavePath(defaultExportName());
-    if (!path) return;
-    await exportJson(path);
-    await refreshSettings();
-    setDataMsg(t("settings.exportDone", { count: entryCount }));
+    try {
+      const path = await pickSavePath(defaultExportName());
+      if (!path) return;
+      await exportJson(path, undefined, vaultId);
+      await refreshSettings();
+      setDataMsg(t("settings.exportDone", { count: entryCount }));
+    } catch (err) {
+      setDataMsg(t("settings.exportFailed", { error: String(err) }));
+    }
   }
 
   async function doExportCopy() {
-    const path = await pickSavePath("kokos-backup.kokos");
-    if (!path) return;
-    await exportVaultCopy(path);
-    await refreshSettings();
-    setDataMsg(t("settings.exportCopyDone"));
+    try {
+      const path = await pickSavePath("kokos-backup.kokos");
+      if (!path) return;
+      await exportVaultCopy(path, vaultId);
+      await refreshSettings();
+      setDataMsg(t("settings.exportCopyDone"));
+    } catch (err) {
+      setDataMsg(t("settings.exportFailed", { error: String(err) }));
+    }
   }
 
   async function doImport() {
@@ -836,7 +844,7 @@ export function Settings() {
     if (!path) return;
     let report: ImportReport;
     try {
-      report = await importJson(path);
+      report = await importJson(path, vaultId);
       await refreshSettings();
     } catch {
       setDataMsg(t("settings.importFailed"));
@@ -880,7 +888,7 @@ export function Settings() {
     setKdbxErr(null);
     let report: ImportReport;
     try {
-      report = await importKdbx(kdbxPath, kdbxPassword);
+      report = await importKdbx(kdbxPath, kdbxPassword, vaultId);
       await refreshSettings();
     } catch (err) {
       setKdbxErr(mapKdbxError(err));

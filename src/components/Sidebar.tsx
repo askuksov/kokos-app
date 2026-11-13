@@ -160,6 +160,7 @@ export function Sidebar() {
     refreshFolders,
     filters,
     setFilters,
+    vaultId,
   } = useVault();
   const { reset: resetClipboard } = useClipboard();
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -191,10 +192,10 @@ export function Sidebar() {
   }, [filterOpen]);
 
   useEffect(() => {
-    listTrash()
+    listTrash(vaultId)
       .then((items) => setTrashCount(items.length))
       .catch((e) => console.error("list_trash failed:", e));
-  }, [route]);
+  }, [route, vaultId]);
 
   const [viewCounts, setViewCounts] = useState<Record<View, number>>({
     all: 0,
