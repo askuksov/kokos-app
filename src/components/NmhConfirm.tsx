@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useT } from "../state/LangContext";
 import { nmhConfirmReply } from "../ipc/commands";
 import { CountdownRing } from "./CountdownRing";
+import { vaultDisplayName } from "../lib/format";
 import "./NmhConfirm.css";
 
 type NmhConfirmRequest = {
@@ -16,7 +17,27 @@ type NmhConfirmRequest = {
   session_minutes: number;
   timeout_secs?: number;
   expires_at_ms?: number;
+  // save_login with two or more open vaults: where the login can go.
+  vault_choices?: VaultChoice[];
+  default_vault?: string | null;
 };
+
+type VaultChoice = { id: string; locked: boolean };
+
+// Vault names for the picker. Two vaults with the same file name get their
+// folder added so they can be told apart.
+function vaultLabels(choices: VaultChoice[]): Map<string, string> {
+  const names = choices.map((c) => vaultDisplayName(c.id));
+  const labels = new Map<string, string>();
+  choices.forEach((c, i) => {
+    const name = names[i];
+    const clash = names.filter((n) => n === name).length > 1;
+    const parts = c.id.split(/[\\/]/);
+    const folder = parts.length > 1 ? parts[parts.length - 2] : "";
+    labels.set(c.id, clash && folder ? `${name} (${folder})` : name);
+  });
+  return labels;
+}
 
 // Fallback when an older backend sends no timeout_secs (its deadline was 60 s).
 const DEFAULT_TIMEOUT_SECS = 60;
@@ -39,9 +60,11 @@ export function NmhConfirm() {
   const [remember, setRemember] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(DEFAULT_TIMEOUT_SECS);
   const rememberRef = useRef<HTMLInputElement | null>(null);
+  const [vault, setVault] = useState<string | null>(null);
+  const vaultRef = useRef<HTMLSelectElement | null>(null);
 
-  function replyOnce(id: string, allowed: boolean) {
-    void nmhConfirmReply(id, allowed, allowed && remember);
+  function replyOnce(id: string, allowed: boolean, pickedVault: string | null = null) {
+    void nmhConfirmReply(id, allowed, allowed && remember, allowed ? pickedVault : null);
   }
 
   useEffect(() => {
@@ -86,6 +109,7 @@ export function NmhConfirm() {
 
   useEffect(() => {
     setRemember(false);
+    setVault(req?.default_vault ?? null);
   }, [req?.req_id]);
 
   // Count down to the backend's auto-deny. The backend closes the prompt itself
@@ -112,7 +136,8 @@ export function NmhConfirm() {
     if (!current) return;
     reqRef.current = null;
     setReq(null);
-    replyOnce(current.req_id, allowed);
+    const picked = (current.vault_choices?.length ?? 0) >= 2 ? vault : null;
+    replyOnce(current.req_id, allowed, picked);
   }
 
   useEffect(() => {
@@ -124,8 +149,8 @@ export function NmhConfirm() {
         return;
       }
       if (ev.key !== "Tab") return;
-      const stops = [rememberRef.current, denyRef.current, allowRef.current].filter(
-        (el): el is HTMLInputElement | HTMLButtonElement => el != null,
+      const stops = [vaultRef.current, rememberRef.current, denyRef.current, allowRef.current].filter(
+        (el): el is HTMLSelectElement | HTMLInputElement | HTMLButtonElement => el != null,
       );
       if (stops.length < 2) return;
       const first = stops[0];
@@ -146,13 +171,15 @@ export function NmhConfirm() {
     }
     document.addEventListener("keydown", onDocKeyDown, true);
     return () => document.removeEventListener("keydown", onDocKeyDown, true);
-  }, [req]);
+  }, [req, vault]);
 
   if (!req) return null;
 
   const actionKey = ACTION_KEYS[req.action];
   const headingId = "kv-nmh-confirm-heading";
   const isRead = req.action === "get_secret" || req.action === "get_totp";
+  const choices = req.vault_choices ?? [];
+  const labels = vaultLabels(choices);
 
   return (
     <div className="kv-modal-scrim kv-nmh-scrim">
@@ -174,6 +201,27 @@ export function NmhConfirm() {
           )}
           {req.field != null && (
             <p className="kv-nmh-line">{t("nmh.fieldLine", { field: req.field })}</p>
+          )}
+          {choices.length >= 2 && (
+            <label className="kv-nmh-vault">
+              <span>{t("nmh.saveTo")}</span>
+              <span className="kv-nmh-vault-wrap">
+                <select
+                  ref={vaultRef}
+                  className="kv-nmh-vault-select"
+                  value={vault ?? ""}
+                  onChange={(ev) => setVault(ev.target.value)}
+                >
+                  {choices.map((c) => (
+                    <option key={c.id} value={c.id} disabled={c.locked}>
+                      {c.locked
+                        ? t("nmh.vaultLocked", { name: labels.get(c.id) ?? c.id })
+                        : labels.get(c.id) ?? c.id}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            </label>
           )}
           {isRead && req.mode === "session_domain" && (
             <p className="kv-nmh-hint">

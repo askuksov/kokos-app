@@ -699,6 +699,8 @@ export const en: Record<string, string> = {
   "nmh.forSite": "Requested by {domain}",
   "nmh.asUser": "Username: {username}",
   "nmh.fieldLine": "Field: {field}",
+  "nmh.saveTo": "Save to",
+  "nmh.vaultLocked": "{name} (locked)",
   "nmh.allow": "Allow",
   "nmh.deny": "Deny",
   "nmh.grantHint": "Allowing also lets this extension read other logins for {domain} for {minutes} min without asking.",

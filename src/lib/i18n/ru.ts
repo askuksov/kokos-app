@@ -699,6 +699,8 @@ export const ru: Record<string, string> = {
   "nmh.forSite": "Запрос от {domain}",
   "nmh.asUser": "Пользователь: {username}",
   "nmh.fieldLine": "Поле: {field}",
+  "nmh.saveTo": "Сохранить в",
+  "nmh.vaultLocked": "{name} (заблокировано)",
   "nmh.allow": "Разрешить",
   "nmh.deny": "Отклонить",
   "nmh.grantHint": "Разрешение также даст этому расширению доступ к другим логинам для {domain} на {minutes} мин без дополнительных запросов.",

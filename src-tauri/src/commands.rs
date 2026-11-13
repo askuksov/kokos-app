@@ -4422,18 +4422,21 @@ pub fn note_activity(state: State<'_, AppState>) -> CmdResult<()> {
 /// trusted there either -- `handlers::should_persist_grant` re-checks it
 /// against the live server-side mode, so a modified frontend sending
 /// `remember: true` in a mode that forbids persisting a grant cannot mint
-/// one.
+/// one. `vault_id` is the vault picked in a `save_login` prompt (`None` keeps
+/// the default); `handlers::save_target` checks it against what the prompt
+/// offered.
 #[tauri::command]
 pub fn nmh_confirm_reply(
     state: State<'_, AppState>,
     req_id: String,
     allowed: bool,
     remember: bool,
+    vault_id: Option<String>,
 ) -> CmdResult<()> {
-    state
-        .nmh
-        .confirms
-        .reply(&req_id, crate::nmh::grants::ConfirmAnswer { allowed, remember });
+    state.nmh.confirms.reply(
+        &req_id,
+        crate::nmh::grants::ConfirmAnswer { allowed, remember, vault_id },
+    );
     Ok(())
 }
 

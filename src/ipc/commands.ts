@@ -272,8 +272,12 @@ export const restoreDownload = (fileId: string, localPath: string) =>
 export const restoreBind = () => invoke<void>("gdrive_restore_bind");
 export const restoreCancel = () => invoke<void>("gdrive_restore_cancel");
 
-export const nmhConfirmReply = (reqId: string, allowed: boolean, remember: boolean) =>
-  invoke<void>("nmh_confirm_reply", { reqId, allowed, remember });
+export const nmhConfirmReply = (
+  reqId: string,
+  allowed: boolean,
+  remember: boolean,
+  vaultId: string | null = null,
+) => invoke<void>("nmh_confirm_reply", { reqId, allowed, remember, vaultId });
 
 export type NmhStatus = {
   enabled: boolean;
