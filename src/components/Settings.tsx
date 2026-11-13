@@ -66,6 +66,7 @@ import { ManageFieldTemplates } from "./ManageFieldTemplates";
 import { PasswordHealth } from "./PasswordHealth";
 import type { SettingsTab } from "../state/VaultContext";
 import { useTextImport } from "../state/TextImportContext";
+import { CHROME_STORE_ID, FIREFOX_STORE_ID } from "../lib/storeExtensionIds";
 import "./Settings.css";
 
 type StorageMode = "off" | "password" | "touchid";
@@ -904,8 +905,8 @@ export function Settings() {
   const [nmhSt, setNmhSt] = useState<NmhStatus | null>(null);
   const [nmhBusy, setNmhBusy] = useState(false);
   const [nmhErr, setNmhErr] = useState<string | null>(null);
-  const [chromeId, setChromeId] = useState("");
-  const [firefoxId, setFirefoxId] = useState("");
+  const [chromeId, setChromeId] = useState(CHROME_STORE_ID);
+  const [firefoxId, setFirefoxId] = useState(FIREFOX_STORE_ID);
 
   const [hibpBusy, setHibpBusy] = useState(false);
 
@@ -928,8 +929,9 @@ export function Settings() {
     try {
       const st = await nmhStatus();
       setNmhSt(st);
-      if (seed === "both" || seed === "chrome") setChromeId(st.chrome_ids[0] ?? "");
-      if (seed === "both" || seed === "firefox") setFirefoxId(st.firefox_ids[0] ?? "");
+      // No registered ID yet (or just removed): offer the store ID.
+      if (seed === "both" || seed === "chrome") setChromeId(st.chrome_ids[0] ?? CHROME_STORE_ID);
+      if (seed === "both" || seed === "firefox") setFirefoxId(st.firefox_ids[0] ?? FIREFOX_STORE_ID);
     } catch {
       setNmhErr(t("settings.nmhGenericError"));
     }
@@ -1252,7 +1254,8 @@ export function Settings() {
     {
       browser: "chrome" as const,
       label: t("settings.nmhChromeLabel"),
-      hint: t("settings.nmhBadChromeId"),
+      hint: t("settings.nmhChromeHint"),
+      storeId: CHROME_STORE_ID,
       id: chromeId,
       setId: setChromeId,
       registered: nmhSt?.chrome_registered ?? false,
@@ -1261,7 +1264,8 @@ export function Settings() {
     {
       browser: "firefox" as const,
       label: t("settings.nmhFirefoxLabel"),
-      hint: t("settings.nmhBadFirefoxId"),
+      hint: t("settings.nmhFirefoxHint"),
+      storeId: FIREFOX_STORE_ID,
       id: firefoxId,
       setId: setFirefoxId,
       registered: nmhSt?.firefox_registered ?? false,
@@ -2060,6 +2064,16 @@ export function Settings() {
                       autoCorrect="off"
                       spellCheck={false}
                     />
+                    {row.id.trim() !== row.storeId && (
+                      <button
+                        type="button"
+                        className="kv-btn is-ghost"
+                        disabled={nmhBusy}
+                        onClick={() => row.setId(row.storeId)}
+                      >
+                        {t("settings.nmhUseStoreId")}
+                      </button>
+                    )}
                     <span
                       className={"kv-nmh-dot" + (row.registered ? " is-on" : "")}
                       aria-hidden="true"
