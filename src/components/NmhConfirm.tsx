@@ -24,17 +24,25 @@ type NmhConfirmRequest = {
 
 type VaultChoice = { id: string; locked: boolean };
 
-// Vault names for the picker. Two vaults with the same file name get their
-// folder added so they can be told apart.
+// Vault names for the picker. Vaults that share a file name get as many of
+// their parent folders as it takes to tell them apart, else the full path.
 function vaultLabels(choices: VaultChoice[]): Map<string, string> {
-  const names = choices.map((c) => vaultDisplayName(c.id));
+  const folders = choices.map((c) => c.id.split(/[\\/]/).filter(Boolean).slice(0, -1));
+  const labelAt = (i: number, depth: number) => {
+    const name = vaultDisplayName(choices[i].id);
+    if (depth === 0) return name;
+    return `${name} (${folders[i].slice(-depth).join("/")})`;
+  };
   const labels = new Map<string, string>();
   choices.forEach((c, i) => {
-    const name = names[i];
-    const clash = names.filter((n) => n === name).length > 1;
-    const parts = c.id.split(/[\\/]/);
-    const folder = parts.length > 1 ? parts[parts.length - 2] : "";
-    labels.set(c.id, clash && folder ? `${name} (${folder})` : name);
+    for (let depth = 0; depth <= folders[i].length; depth++) {
+      const mine = labelAt(i, depth);
+      if (!choices.some((_, j) => j !== i && labelAt(j, depth) === mine)) {
+        labels.set(c.id, mine);
+        return;
+      }
+    }
+    labels.set(c.id, c.id);
   });
   return labels;
 }
