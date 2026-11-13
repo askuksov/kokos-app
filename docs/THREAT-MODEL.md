@@ -154,6 +154,17 @@ and the access-control primitives it can use differ.
   confirmation dialog (`handlers::confirm`) for anything not already
   granted; `save_login`/`update_login` always confirm regardless of any
   grant, per that module's doc comment.
+- Vault scope: the extension sees every **unlocked** open vault, not only the
+  active tab. `get_logins` reads them active-first and records which vault
+  each offered entry came from (`handlers::ConnScope::entry_vaults`); a later
+  `get_secret`/`get_totp`/`update_login` on that entry acts on that vault
+  only. A locked vault is never read, and a vault that is momentarily busy
+  makes the lookup answer `locked` rather than return a partial list. Grants
+  stay per vault (both tiers are keyed by vault). `save_login` writes to the
+  vault picked in the confirmation dialog (default: the active vault when it
+  is unlocked); the pick is accepted only when it names a vault the dialog
+  offered as unlocked (`handlers::save_target`). Vault names and paths never
+  reach the extension.
 - The socket directory is created `0700` and the socket file `0600`
   (`src-tauri/src/nmh/mod.rs`). Two defense-in-depth peer checks sit on top of
   those permissions: a `getpeereid(2)` same-uid gate at accept, and

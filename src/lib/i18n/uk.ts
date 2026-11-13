@@ -702,6 +702,8 @@ export const uk: Record<string, string> = {
   "nmh.forSite": "Запит від {domain}",
   "nmh.asUser": "Користувач: {username}",
   "nmh.fieldLine": "Поле: {field}",
+  "nmh.saveTo": "Зберегти в",
+  "nmh.vaultLocked": "{name} (заблоковано)",
   "nmh.allow": "Дозволити",
   "nmh.deny": "Відхилити",
   "nmh.grantHint": "Дозвіл також надасть цьому розширенню доступ до інших логінів для {domain} протягом {minutes} хв без додаткових запитів.",

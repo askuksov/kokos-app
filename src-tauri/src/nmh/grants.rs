@@ -42,12 +42,18 @@ use std::time::{Duration, Instant};
 /// `handlers::confirm` and `handlers::should_persist_grant` re-check that
 /// server-side rather than trusting this bit (the frontend is never the
 /// authority). `cancel_all` and a timed-out wait both answer
-/// `ConfirmAnswer { allowed: false, remember: false }` -- a denial by
-/// construction never remembers anything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `ConfirmAnswer { allowed: false, remember: false, vault_id: None }` -- a
+/// denial by construction never remembers anything.
+///
+/// `vault_id` is the vault the human picked in a `save_login` prompt that
+/// offered a choice; `None` means "keep the default". Like `remember`, it is
+/// never trusted as is: `handlers::save_target` accepts it only when it names
+/// a vault the prompt actually offered as unlocked.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfirmAnswer {
     pub allowed: bool,
     pub remember: bool,
+    pub vault_id: Option<String>,
 }
 
 /// Pending browser-extension confirmations, keyed by a fresh request id
@@ -131,6 +137,7 @@ impl Registry {
             let _ = tx.send(ConfirmAnswer {
                 allowed: false,
                 remember: false,
+                vault_id: None,
             });
         }
     }
@@ -348,7 +355,8 @@ mod tests {
             &id,
             ConfirmAnswer {
                 allowed: true,
-                remember: false
+                remember: false,
+                vault_id: None,
             }
         ));
         let answer = rx.recv_timeout(Duration::from_millis(200)).unwrap();
@@ -367,7 +375,8 @@ mod tests {
             &id,
             ConfirmAnswer {
                 allowed: true,
-                remember: true
+                remember: true,
+                vault_id: None,
             }
         ));
         let answer = rx.recv_timeout(Duration::from_millis(200)).unwrap();
@@ -383,7 +392,8 @@ mod tests {
                 "nope",
                 ConfirmAnswer {
                     allowed: true,
-                    remember: false
+                    remember: false,
+                    vault_id: None,
                 }
             ),
             "an unknown id is a no-op"
@@ -395,7 +405,8 @@ mod tests {
                 &id,
                 ConfirmAnswer {
                     allowed: true,
-                    remember: false
+                    remember: false,
+                    vault_id: None,
                 }
             ),
             "the known id's first reply succeeds"
@@ -405,7 +416,8 @@ mod tests {
                 &id,
                 ConfirmAnswer {
                     allowed: false,
-                    remember: false
+                    remember: false,
+                    vault_id: None,
                 }
             ),
             "a second reply for the same id is a no-op"
@@ -439,7 +451,8 @@ mod tests {
                 &id,
                 ConfirmAnswer {
                     allowed: true,
-                    remember: false
+                    remember: false,
+                    vault_id: None,
                 }
             ),
             "a reply for an id cancel_all already drained is a no-op"
@@ -458,7 +471,8 @@ mod tests {
                 &id,
                 ConfirmAnswer {
                     allowed: true,
-                    remember: false
+                    remember: false,
+                    vault_id: None,
                 }
             ),
             "a reply after forget is a no-op, not a resurrection"
@@ -475,7 +489,8 @@ mod tests {
                 &id,
                 ConfirmAnswer {
                     allowed: true,
-                    remember: false
+                    remember: false,
+                    vault_id: None,
                 }
             ),
             "the id was pending even though the send necessarily failed"
@@ -493,7 +508,8 @@ mod tests {
             &id2,
             ConfirmAnswer {
                 allowed: true,
-                remember: false
+                remember: false,
+                vault_id: None,
             }
         ));
         assert!(rx2.recv_timeout(Duration::from_millis(200)).unwrap().allowed);

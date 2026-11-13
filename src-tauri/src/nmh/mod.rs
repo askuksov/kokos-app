@@ -666,7 +666,7 @@ const GRANT_AUDIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(5
 /// `format!("grant:{action}@{domain}")`. NEVER `last_denied`/
 /// `DENY_AUDIT_WINDOW` (see `NmhState::last_granted`'s doc comment for why
 /// sharing would reopen the audit-flood hole).
-fn audit_grant_release(app: &tauri::AppHandle, action: &str, domain: &str) {
+fn audit_grant_release(app: &tauri::AppHandle, vault_id: &str, action: &str, domain: &str) {
     let event = if action == "get_totp" {
         "extension_totp_granted"
     } else {
@@ -675,7 +675,7 @@ fn audit_grant_release(app: &tauri::AppHandle, action: &str, domain: &str) {
     let st = app.state::<crate::state::AppState>();
     let now = std::time::Instant::now();
     if st.nmh.take_grant_release_log(action, domain, now) {
-        handlers::audit_event(app, event, Some(domain));
+        handlers::audit_event_in(app, vault_id, event, Some(domain));
     }
 }
 

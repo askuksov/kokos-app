@@ -25,10 +25,25 @@ pub const MAX_ITEMS: usize = 50;
 /// additionally accept an explicit `url` that anchors on its own. A
 /// persistent, connection-independent candidate set would be a strictly
 /// larger attack surface for no real gain.
+///
+/// `entry_vaults` records which open vault each candidate came from, since
+/// `get_logins` reads every unlocked vault. A later request on a candidate
+/// goes to that vault, never to whichever vault is active by then.
 #[derive(Default)]
 pub struct ConnScope {
     pub candidate_ids: Vec<String>,
     pub last_domain: Option<String>,
+    pub entry_vaults: Vec<(String, String)>,
+}
+
+impl ConnScope {
+    /// The vault the last `get_logins` read `entry_id` from, if it offered it.
+    fn vault_of(&self, entry_id: &str) -> Option<&str> {
+        self.entry_vaults
+            .iter()
+            .find(|(e, _)| e == entry_id)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// A rejected payload: the wire code plus a human-readable reason. Handlers
@@ -73,8 +88,9 @@ fn classify_access(s: &kokos_core::session::Session) -> Access {
     }
 }
 
-/// Answers `ping` / `get_status`. `locked` means "no vault is readable" — the
-/// session's `vault` is `None`. This is intentionally simpler than `Access`
+/// Answers `ping` / `get_status`. `locked` means "no vault is readable" — no
+/// open vault has its `vault` set (NMH reads every unlocked vault, so one
+/// unlocked vault is enough). This is intentionally simpler than `Access`
 /// above (it does not distinguish `Locked` from `NoVault`, since both read as
 /// "you cannot read right now" for a status probe): `Access` exists for
 /// handlers that must pick between `codes::LOCKED` and `codes::NO_VAULT`. A
@@ -85,7 +101,7 @@ pub fn status(app: &tauri::AppHandle, req: &Request) -> Response {
         .state::<crate::state::AppState>()
         .sessions
         .lock()
-        .map(|mut reg| reg.active_mut().map(|s| s.vault.is_none()).unwrap_or(true))
+        .map(|mut reg| !reg.iter_mut().any(|s| s.vault.is_some()))
         .unwrap_or(true);
 
     if req.action == "ping" {
@@ -255,10 +271,82 @@ fn gen_opts(payload: &serde_json::Value) -> Result<kokos_core::generator::GenOpt
 /// security property (a lookup for a new site drops the previous site's
 /// candidates, even when the new lookup is empty) is directly testable
 /// without a live `AppHandle`.
-fn set_scope(scope: &mut ConnScope, ids: Vec<String>, url: &str) {
-    scope.candidate_ids = ids;
+fn set_scope(scope: &mut ConnScope, hits: Vec<(String, String)>, url: &str) {
+    scope.candidate_ids = hits.iter().map(|(entry, _)| entry.clone()).collect();
+    scope.entry_vaults = hits;
     scope.last_domain =
         kokos_core::url_match::host_of(url).and_then(|h| kokos_core::url_match::etld_plus_one(&h));
+}
+
+/// Open vault ids in the order NMH reads them: the active vault first, then
+/// the rest in tab order. Fixes which vault wins when two open vaults hold the
+/// same entry id (a copied vault file keeps its entry ids).
+fn vault_order(open: &[String], active: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(open.len());
+    if let Some(a) = active {
+        if open.iter().any(|id| id == a) {
+            out.push(a.to_string());
+        }
+    }
+    out.extend(open.iter().filter(|id| Some(id.as_str()) != active).cloned());
+    out
+}
+
+/// Lock state of every open vault, in `vault_order`.
+fn vault_states(
+    reg: &mut crate::session_registry::SessionRegistry,
+) -> Vec<(String, VaultState)> {
+    let order = vault_order(&reg.open_paths(), reg.active_id());
+    order
+        .into_iter()
+        .filter_map(|id| {
+            let state = match reg.get(&id) {
+                Some(s) => vault_state(s),
+                None => return None,
+            };
+            Some((id, state))
+        })
+        .collect()
+}
+
+/// Like `Access`, but keeps a vault that is out on loan apart from a locked
+/// one: a cross-vault read must not quietly skip a vault that is only busy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VaultState {
+    Open,
+    Busy,
+    Locked,
+    NoVault,
+}
+
+fn vault_state(s: &kokos_core::session::Session) -> VaultState {
+    if s.vault.is_some() {
+        VaultState::Open
+    } else if s.borrow_identity().is_some() {
+        VaultState::Busy
+    } else if s.last_path.is_some() {
+        VaultState::Locked
+    } else {
+        VaultState::NoVault
+    }
+}
+
+/// Which error a cross-vault read answers when it found no vault it can read.
+/// `None` means at least one vault is readable. A busy vault answers `locked`
+/// (the extension retries), so a read never returns a partial result that
+/// misses a vault for a moment.
+fn cross_vault_block(states: &[VaultState]) -> Option<&'static str> {
+    if states.contains(&VaultState::Busy) {
+        return Some(codes::LOCKED);
+    }
+    if states.contains(&VaultState::Open) {
+        return None;
+    }
+    if states.contains(&VaultState::Locked) {
+        Some(codes::LOCKED)
+    } else {
+        Some(codes::NO_VAULT)
+    }
 }
 
 /// Resets a connection's candidate set to empty/none. `get_logins` calls this
@@ -274,6 +362,49 @@ fn set_scope(scope: &mut ConnScope, ids: Vec<String>, url: &str) {
 fn clear_scope(scope: &mut ConnScope) {
     scope.candidate_ids.clear();
     scope.last_domain = None;
+    scope.entry_vaults.clear();
+}
+
+/// Human-readable text for a `cross_vault_block` / `logins_across_vaults` code.
+fn block_message(code: &str) -> &'static str {
+    match code {
+        c if c == codes::LOCKED => "vault is locked",
+        c if c == codes::NO_VAULT => "no vault is open",
+        _ => "failed to read the vault",
+    }
+}
+
+/// The site's logins from every unlocked vault, active first, each paired
+/// with the vault it came from. Capped at `MAX_ITEMS` in total. An entry id
+/// already taken from an earlier vault is skipped, so each id maps to exactly
+/// one vault. Errs with the wire code when no vault can be read (see
+/// `cross_vault_block`) or a read fails.
+fn logins_across_vaults(
+    reg: &mut crate::session_registry::SessionRegistry,
+    url: &str,
+) -> Result<Vec<(String, kokos_core::logins::LoginMatch)>, &'static str> {
+    let states = vault_states(reg);
+    let only: Vec<VaultState> = states.iter().map(|(_, s)| *s).collect();
+    if let Some(code) = cross_vault_block(&only) {
+        return Err(code);
+    }
+    let mut hits: Vec<(String, kokos_core::logins::LoginMatch)> = Vec::new();
+    for (vid, state) in &states {
+        if *state != VaultState::Open || hits.len() >= MAX_ITEMS {
+            continue;
+        }
+        let Some(v) = reg.get(vid).and_then(|s| s.vault.as_ref()) else {
+            continue;
+        };
+        let found = kokos_core::logins::for_url(&v.conn, url, MAX_ITEMS - hits.len())
+            .map_err(|_| codes::INTERNAL)?;
+        for h in found {
+            if !hits.iter().any(|(_, seen)| seen.id == h.id) {
+                hits.push((vid.clone(), h));
+            }
+        }
+    }
+    Ok(hits)
 }
 
 /// `get_logins`: metadata only, no passwords, no confirmation, no
@@ -295,29 +426,19 @@ pub fn get_logins(app: &tauri::AppHandle, req: &Request, scope: &mut ConnScope) 
         Ok(reg) => reg,
         Err(_) => return Response::err(&req.id, codes::LOCKED, "vault session is unavailable"),
     };
-    let v = match reg.active_mut() {
-        None => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
-        Some(s) => match classify_access(s) {
-            Access::Locked => return Response::err(&req.id, codes::LOCKED, "vault is locked"),
-            Access::NoVault => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
-            Access::Open => s
-                .vault
-                .as_ref()
-                .expect("Access::Open guarantees a vault is present"),
-        },
-    };
-
-    let hits = match kokos_core::logins::for_url(&v.conn, &url, MAX_ITEMS) {
+    let hits = match logins_across_vaults(&mut reg, &url) {
         Ok(h) => h,
-        Err(_) => return Response::err(&req.id, codes::INTERNAL, "failed to read the vault"),
+        Err(code) => return Response::err(&req.id, code, block_message(code)),
     };
+    drop(reg);
 
-    let ids: Vec<String> = hits.iter().map(|h| h.id.clone()).collect();
-    set_scope(scope, ids, &url);
+    let pairs: Vec<(String, String)> =
+        hits.iter().map(|(vid, h)| (h.id.clone(), vid.clone())).collect();
+    set_scope(scope, pairs, &url);
 
     let items: Vec<serde_json::Value> = hits
         .into_iter()
-        .map(|h| {
+        .map(|(_, h)| {
             serde_json::json!({
                 "id": h.id,
                 "title": h.title,
@@ -352,6 +473,19 @@ pub fn audit_event(app: &tauri::AppHandle, event: &str, detail: Option<&str>) {
     let st = app.state::<crate::state::AppState>();
     if let Ok(mut reg) = st.sessions.lock() {
         if let Some(s) = reg.active_mut() {
+            if let Some(v) = s.vault.as_ref() {
+                let _ = kokos_core::audit::append(&v.conn, event, detail);
+            }
+        }
+    };
+}
+
+/// `audit_event` into a named vault: the one an action actually read or
+/// wrote, which need not be the active vault.
+pub fn audit_event_in(app: &tauri::AppHandle, vault_id: &str, event: &str, detail: Option<&str>) {
+    let st = app.state::<crate::state::AppState>();
+    if let Ok(mut reg) = st.sessions.lock() {
+        if let Some(s) = reg.get_mut(vault_id) {
             if let Some(v) = s.vault.as_ref() {
                 let _ = kokos_core::audit::append(&v.conn, event, detail);
             }
@@ -608,8 +742,20 @@ pub struct ConfirmReq<'a> {
     /// handler began). Grant lookups, the touch and any persisted grant all
     /// act on THIS vault, never a fresh `active_mut()`, so a vault switch
     /// during the confirmation wait cannot redirect an approval to another
-    /// vault. Never emitted to the frontend.
+    /// vault. Emitted to the frontend only as `default_vault`, alongside
+    /// `vault_choices`, so the picker can preselect it.
     pub vault_id: &'a str,
+    /// Vaults the human may pick from (`save_login` with two or more open
+    /// vaults); empty means no picker. Any other action passes `&[]`.
+    pub vault_choices: &'a [VaultChoice],
+}
+
+/// One open vault offered in the `save_login` picker. `locked` vaults are
+/// shown but cannot be picked.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct VaultChoice {
+    pub id: String,
+    pub locked: bool,
 }
 
 /// Whether an ALLOWED confirmation should mint a `session_domain` grant (the
@@ -694,6 +840,13 @@ fn clamp_confirm_field(s: &str, max_chars: usize) -> String {
 /// `None` there forgets the entry and denies at once, instead of parking the
 /// connection thread for the full 60s with nobody able to ever reply).
 pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
+    confirm_answer(app, r).allowed
+}
+
+/// `confirm`, returning the whole answer: `save_login` also needs the vault
+/// the human picked. A grant-covered request (no prompt) answers allowed with
+/// no vault pick.
+fn confirm_answer(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> super::grants::ConfirmAnswer {
     use tauri::{Emitter, Manager};
     let st = app.state::<crate::state::AppState>();
 
@@ -754,8 +907,12 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
                 }
             }
         }
-        super::audit_grant_release(app, r.action, r.domain);
-        return true;
+        super::audit_grant_release(app, vault_id, r.action, r.domain);
+        return super::grants::ConfirmAnswer {
+            allowed: true,
+            remember: false,
+            vault_id: None,
+        };
     }
 
     let (req_id, rx) = st.nmh.confirms.open();
@@ -779,15 +936,22 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
             "session_minutes": minutes,
             "timeout_secs": CONFIRM_TIMEOUT_SECS,
             "expires_at_ms": expires_at_ms,
+            "vault_choices": r.vault_choices,
+            "default_vault": if r.vault_choices.is_empty() { None } else { Some(vault_id) },
         }),
     );
+    let denied = super::grants::ConfirmAnswer {
+        allowed: false,
+        remember: false,
+        vault_id: None,
+    };
     if emitted.is_err() {
         st.nmh.confirms.forget(&req_id);
-        return false;
+        return denied;
     }
     let Some(w) = app.get_webview_window("main") else {
         st.nmh.confirms.forget(&req_id);
-        return false;
+        return denied;
     };
     let _ = w.show();
     let _ = w.set_focus();
@@ -804,14 +968,21 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
             super::grants::ConfirmAnswer {
                 allowed: false,
                 remember: false,
+                vault_id: None,
             }
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => super::grants::ConfirmAnswer {
             allowed: false,
             remember: false,
+            vault_id: None,
         },
     };
     let allowed = answer.allowed;
+    // A pick only means something on an approval of a prompt that offered one.
+    let answer = super::grants::ConfirmAnswer {
+        vault_id: if allowed && !r.vault_choices.is_empty() { answer.vault_id } else { None },
+        ..answer
+    };
 
     if should_capture_grant(r.action, &mode, allowed) {
         st.nmh.grants.allow(
@@ -854,11 +1025,11 @@ pub fn confirm(app: &tauri::AppHandle, r: ConfirmReq<'_>) -> bool {
             None => false,
         };
         if persisted {
-            audit_event(app, "extension_grant_added", Some(r.domain));
+            audit_event_in(app, vault_id, "extension_grant_added", Some(r.domain));
         }
     }
 
-    allowed
+    answer
 }
 
 /// `entry_id`: missing or not a non-empty string → `bad_request`.
@@ -964,31 +1135,55 @@ fn secret_gate(
         .sessions
         .lock()
         .map_err(|_| Response::err(&req.id, codes::LOCKED, "vault session is unavailable"))?;
-    let vault_id = match reg.active_id() {
-        Some(id) => id.to_string(),
-        None => return Err(Response::err(&req.id, codes::NO_VAULT, "no vault is open")),
-    };
-    let v = match reg.active_mut() {
-        None => return Err(Response::err(&req.id, codes::NO_VAULT, "no vault is open")),
-        Some(s) => match classify_access(s) {
-            Access::Locked => return Err(Response::err(&req.id, codes::LOCKED, "vault is locked")),
-            Access::NoVault => return Err(Response::err(&req.id, codes::NO_VAULT, "no vault is open")),
-            Access::Open => s
-                .vault
-                .as_ref()
-                .expect("Access::Open guarantees a vault is present"),
-        },
-    };
+    let read_failed = || Response::err(&req.id, codes::INTERNAL, "failed to read the vault");
 
-    let entry = match kokos_core::entries::get(&v.conn, &entry_id) {
-        Ok(e) => e,
-        Err(_) => {
-            drop(reg);
-            return Err(Response::err(
-                &req.id,
-                codes::INTERNAL,
-                "failed to read the vault",
-            ));
+    // Which vault holds the entry: the one the last `get_logins` read it from
+    // when it was offered; otherwise the first unlocked vault (active first)
+    // that has it, for the `url`-anchored path. Not found anywhere leaves
+    // `entry` empty and `scope_decision` answers below, exactly as before.
+    let (vault_id, entry) = match scope.vault_of(&entry_id) {
+        Some(vid) => {
+            let vid = vid.to_string();
+            let v = match reg.get_mut(&vid) {
+                None => return Err(Response::err(&req.id, codes::NO_VAULT, "no vault is open")),
+                Some(s) => match classify_access(s) {
+                    Access::Locked => {
+                        return Err(Response::err(&req.id, codes::LOCKED, "vault is locked"))
+                    }
+                    Access::NoVault => {
+                        return Err(Response::err(&req.id, codes::NO_VAULT, "no vault is open"))
+                    }
+                    Access::Open => s
+                        .vault
+                        .as_ref()
+                        .expect("Access::Open guarantees a vault is present"),
+                },
+            };
+            let entry = kokos_core::entries::get(&v.conn, &entry_id).map_err(|_| read_failed())?;
+            (vid, entry)
+        }
+        None => {
+            let states = vault_states(&mut reg);
+            let only: Vec<VaultState> = states.iter().map(|(_, s)| *s).collect();
+            if let Some(code) = cross_vault_block(&only) {
+                return Err(Response::err(&req.id, code, block_message(code)));
+            }
+            let mut found = (String::new(), None);
+            for (vid, state) in &states {
+                if *state != VaultState::Open {
+                    continue;
+                }
+                let Some(v) = reg.get(vid).and_then(|s| s.vault.as_ref()) else {
+                    continue;
+                };
+                if let Some(e) =
+                    kokos_core::entries::get(&v.conn, &entry_id).map_err(|_| read_failed())?
+                {
+                    found = (vid.clone(), Some(e));
+                    break;
+                }
+            }
+            found
         }
     };
     let was_candidate = scope.candidate_ids.iter().any(|id| id == &entry_id);
@@ -1063,6 +1258,7 @@ pub fn get_secret(
             username: gate.username.as_deref(),
             field: field_name.as_deref(),
             vault_id: &gate.vault_id,
+            vault_choices: &[],
         },
     ) {
         let detail = format!("get_secret@{}", gate.domain);
@@ -1090,7 +1286,7 @@ pub fn get_secret(
     match kokos_core::entries::reveal_field(&v.conn, &gate.entry_id, &field_id) {
         Ok(Some(value)) => {
             drop(reg);
-            audit_event(app, "extension_secret", Some(&gate.domain));
+            audit_event_in(app, &gate.vault_id, "extension_secret", Some(&gate.domain));
             Response::ok(&req.id, serde_json::json!({ "value": value }))
         }
         Ok(None) => {
@@ -1137,6 +1333,7 @@ pub fn get_totp(
             username: gate.username.as_deref(),
             field: field_name.as_deref(),
             vault_id: &gate.vault_id,
+            vault_choices: &[],
         },
     ) {
         let detail = format!("get_totp@{}", gate.domain);
@@ -1169,7 +1366,7 @@ pub fn get_totp(
                 Ok(params) => {
                     let code =
                         kokos_core::totp::code_at(&params, kokos_core::db::now_unix() as u64);
-                    audit_event(app, "extension_totp", Some(&gate.domain));
+                    audit_event_in(app, &gate.vault_id, "extension_totp", Some(&gate.domain));
                     Response::ok(
                         &req.id,
                         serde_json::json!({
@@ -1390,11 +1587,53 @@ pub fn update_patch_fields(
         .collect()
 }
 
+/// The `save_login` picker list: every open vault in `vault_order`, a locked
+/// one marked so. A busy vault (out on loan for a moment) counts as unlocked;
+/// if it is still busy at write time the save answers `locked` and the
+/// extension retries. A session that never opened a vault is left out.
+fn save_choices(states: &[(String, VaultState)]) -> Vec<VaultChoice> {
+    states
+        .iter()
+        .filter(|(_, s)| *s != VaultState::NoVault)
+        .map(|(id, s)| VaultChoice {
+            id: id.clone(),
+            locked: *s == VaultState::Locked,
+        })
+        .collect()
+}
+
+/// Where a save goes when the human picks nothing: the first unlocked choice.
+/// `choices` is in `vault_order`, so that is the active vault when it is
+/// unlocked. `None` when every open vault is locked (or none is open).
+fn default_save_target(choices: &[VaultChoice]) -> Option<String> {
+    choices.iter().find(|c| !c.locked).map(|c| c.id.clone())
+}
+
+/// The vault an approved save writes to. No pick keeps the default. A pick is
+/// taken only when it names a vault the prompt offered as unlocked; anything
+/// else (an unknown id, a locked vault, a pick when no picker was shown) is
+/// refused rather than quietly redirected, since the WebView is never the
+/// authority.
+fn save_target(offered: &[VaultChoice], default: &str, picked: Option<&str>) -> Option<String> {
+    match picked {
+        None => Some(default.to_string()),
+        Some(p) => offered
+            .iter()
+            .find(|c| c.id == p && !c.locked)
+            .map(|c| c.id.clone()),
+    }
+}
+
 /// `save_login`: creates a new entry at the vault root from a
 /// browser-submitted login. Writes always confirm, even in `session_domain`
 /// mode -- `grants::needs_confirm` enforces that unconditionally for
 /// `save_login`/`update_login`. The entry does not exist yet at confirm time,
 /// so `ConfirmReq.field` is always `None` here.
+///
+/// Target vault: the active vault when it is unlocked, else the first
+/// unlocked one; with two or more open vaults the prompt offers a picker
+/// (locked vaults shown but not pickable) and the write goes to the pick,
+/// see `save_target`. Answers `locked` only when every open vault is locked.
 ///
 /// On success it emits `vault-changed` with the vault id, so an open window
 /// refreshes and shows the new entry.
@@ -1405,30 +1644,28 @@ pub fn save_login(app: &tauri::AppHandle, req: &Request, origin: &str) -> Respon
     };
 
     let st = app.state::<crate::state::AppState>();
-    // The vault this save is scoped to: captured before the confirmation
-    // wait and used for the write, so a vault switch while the prompt is up
-    // cannot redirect an approved save into a different vault.
-    let target_vault: String = {
+    // The vaults this save may go to, read before the confirmation wait. The
+    // write goes to the default (or the human's pick among these), never to
+    // whichever vault is active once the prompt closes.
+    let choices: Vec<VaultChoice> = {
         let mut reg = match st.sessions.lock() {
             Ok(reg) => reg,
             Err(_) => return Response::err(&req.id, codes::LOCKED, "vault session is unavailable"),
         };
-        match reg.active_mut() {
-            None => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
-            Some(s) => match classify_access(s) {
-                Access::Locked => return Response::err(&req.id, codes::LOCKED, "vault is locked"),
-                Access::NoVault => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
-                Access::Open => {}
-            },
-        }
-        match reg.active_id() {
-            Some(id) => id.to_string(),
-            None => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
-        }
+        save_choices(&vault_states(&mut reg))
     };
+    let Some(default_vault) = default_save_target(&choices) else {
+        return if choices.is_empty() {
+            Response::err(&req.id, codes::NO_VAULT, "no vault is open")
+        } else {
+            Response::err(&req.id, codes::LOCKED, "vault is locked")
+        };
+    };
+    // One open vault: nothing to choose, so no picker.
+    let offered: &[VaultChoice] = if choices.len() >= 2 { &choices } else { &[] };
 
     let domain = domain_for(Some(&args.url), None);
-    if !confirm(
+    let answer = confirm_answer(
         app,
         ConfirmReq {
             action: "save_login",
@@ -1437,14 +1674,21 @@ pub fn save_login(app: &tauri::AppHandle, req: &Request, origin: &str) -> Respon
             title: &args.title,
             username: Some(&args.username),
             field: None,
-            vault_id: &target_vault,
+            vault_id: &default_vault,
+            vault_choices: offered,
         },
-    ) {
+    );
+    let target_vault = if answer.allowed {
+        save_target(offered, &default_vault, answer.vault_id.as_deref())
+    } else {
+        None
+    };
+    let Some(target_vault) = target_vault else {
         let detail = format!("save_login@{domain}");
         let key = format!("confirm:{detail}");
         super::audit_denial(app, &key, &detail);
         return Response::err(&req.id, codes::DENIED, "confirmation was denied");
-    }
+    };
 
     let (vid, mut v) = {
         let mut reg = match st.sessions.lock() {
@@ -1489,7 +1733,7 @@ pub fn save_login(app: &tauri::AppHandle, req: &Request, origin: &str) -> Respon
 
     match outcome {
         Ok(created) => {
-            audit_event(app, "extension_login_saved", Some(&domain));
+            audit_event_in(app, &vid, "extension_login_saved", Some(&domain));
             use tauri::Emitter;
             let _ = app.emit("vault-changed", serde_json::json!({ "vault_id": vid }));
             Response::ok(&req.id, serde_json::json!({ "entry_id": created.id }))
@@ -1587,6 +1831,7 @@ pub fn update_login(
             username: gate.username.as_deref(),
             field: field_name.as_deref(),
             vault_id: &gate.vault_id,
+            vault_choices: &[],
         },
     ) {
         let detail = format!("update_login@{}", gate.domain);
@@ -1709,7 +1954,7 @@ pub fn update_login(
 
     match outcome {
         Ok(true) => {
-            audit_event(app, "extension_login_updated", Some(&gate.domain));
+            audit_event_in(app, &vid, "extension_login_updated", Some(&gate.domain));
             use tauri::Emitter;
             let _ = app.emit("vault-changed", serde_json::json!({ "vault_id": vid }));
             Response::ok(&req.id, serde_json::json!({ "ok": true }))
@@ -2063,6 +2308,7 @@ mod tests {
         let mut scope = ConnScope {
             candidate_ids: vec!["a".to_string(), "b".to_string()],
             last_domain: Some("example.com".to_string()),
+            entry_vaults: vec![("a".to_string(), "/v1".to_string())],
         };
 
         set_scope(&mut scope, vec![], "https://other.org");
@@ -2071,21 +2317,24 @@ mod tests {
             scope.candidate_ids.is_empty(),
             "the previous site's candidates must not survive an empty lookup for a new site"
         );
+        assert!(scope.entry_vaults.is_empty());
         assert_eq!(scope.last_domain.as_deref(), Some("other.org"));
     }
 
 
     #[test]
-    fn clear_scope_resets_both_fields() {
+    fn clear_scope_resets_every_field() {
         let mut scope = ConnScope {
             candidate_ids: vec!["a".to_string(), "b".to_string()],
             last_domain: Some("example.com".to_string()),
+            entry_vaults: vec![("a".to_string(), "/v1".to_string())],
         };
 
         clear_scope(&mut scope);
 
         assert!(scope.candidate_ids.is_empty());
         assert_eq!(scope.last_domain, None);
+        assert!(scope.entry_vaults.is_empty(), "a stale entry-to-vault map must not survive");
     }
 
     #[test]
@@ -2093,6 +2342,7 @@ mod tests {
         let mut scope = ConnScope {
             candidate_ids: vec!["entry-a".to_string()],
             last_domain: Some("a.com".to_string()),
+            ..Default::default()
         };
 
         clear_scope(&mut scope);
@@ -2102,6 +2352,105 @@ mod tests {
             "a failing get_logins must not leave a stale, different-site candidate set live"
         );
         assert_eq!(scope.last_domain, None);
+    }
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn choice(id: &str, locked: bool) -> VaultChoice {
+        VaultChoice { id: id.to_string(), locked }
+    }
+
+    #[test]
+    fn set_scope_maps_each_candidate_to_its_vault() {
+        let mut scope = ConnScope::default();
+        set_scope(
+            &mut scope,
+            vec![
+                ("e1".to_string(), "/a".to_string()),
+                ("e2".to_string(), "/b".to_string()),
+            ],
+            "https://example.com/login",
+        );
+        assert_eq!(scope.candidate_ids, ids(&["e1", "e2"]));
+        assert_eq!(scope.vault_of("e1"), Some("/a"));
+        assert_eq!(scope.vault_of("e2"), Some("/b"));
+        assert_eq!(scope.vault_of("e3"), None, "an id never offered has no vault");
+    }
+
+    #[test]
+    fn vault_order_puts_the_active_vault_first_then_tab_order() {
+        assert_eq!(vault_order(&ids(&["/a", "/b", "/c"]), Some("/b")), ids(&["/b", "/a", "/c"]));
+        assert_eq!(vault_order(&ids(&["/a", "/b"]), None), ids(&["/a", "/b"]));
+        assert_eq!(
+            vault_order(&ids(&["/a", "/b"]), Some("/gone")),
+            ids(&["/a", "/b"]),
+            "an active id that is not open adds nothing"
+        );
+    }
+
+    #[test]
+    fn cross_vault_read_needs_one_unlocked_vault() {
+        use VaultState::*;
+        assert_eq!(cross_vault_block(&[Locked, Open, Locked]), None);
+        assert_eq!(cross_vault_block(&[Locked, Locked]), Some(codes::LOCKED));
+        assert_eq!(cross_vault_block(&[NoVault]), Some(codes::NO_VAULT));
+        assert_eq!(cross_vault_block(&[]), Some(codes::NO_VAULT));
+    }
+
+    #[test]
+    fn a_busy_vault_blocks_a_cross_vault_read_instead_of_being_skipped() {
+        use VaultState::*;
+        assert_eq!(
+            cross_vault_block(&[Open, Busy]),
+            Some(codes::LOCKED),
+            "skipping a busy vault would hide its logins and invite a duplicate save"
+        );
+    }
+
+    #[test]
+    fn save_choices_mark_locked_vaults_and_drop_empty_sessions() {
+        use VaultState::*;
+        let states = vec![
+            ("/a".to_string(), Open),
+            ("/b".to_string(), Locked),
+            ("/c".to_string(), Busy),
+            ("/d".to_string(), NoVault),
+        ];
+        assert_eq!(
+            save_choices(&states),
+            vec![choice("/a", false), choice("/b", true), choice("/c", false)]
+        );
+    }
+
+    #[test]
+    fn default_save_target_is_the_first_unlocked_choice() {
+        assert_eq!(
+            default_save_target(&[choice("/active", false), choice("/b", false)]),
+            Some("/active".to_string())
+        );
+        assert_eq!(
+            default_save_target(&[choice("/active", true), choice("/b", false)]),
+            Some("/b".to_string()),
+            "a locked active vault falls through to the next unlocked one"
+        );
+        assert_eq!(default_save_target(&[choice("/a", true)]), None);
+        assert_eq!(default_save_target(&[]), None);
+    }
+
+    #[test]
+    fn save_target_takes_only_an_offered_unlocked_pick() {
+        let offered = [choice("/a", false), choice("/b", false), choice("/c", true)];
+        assert_eq!(save_target(&offered, "/a", None), Some("/a".to_string()));
+        assert_eq!(save_target(&offered, "/a", Some("/b")), Some("/b".to_string()));
+        assert_eq!(save_target(&offered, "/a", Some("/c")), None, "a locked vault is refused");
+        assert_eq!(save_target(&offered, "/a", Some("/x")), None, "an unknown vault is refused");
+        assert_eq!(
+            save_target(&[], "/a", Some("/b")),
+            None,
+            "a pick with no picker shown is refused, not redirected"
+        );
     }
 }
 
@@ -2113,6 +2462,7 @@ mod anchor_tests {
         ConnScope {
             candidate_ids: ids.iter().map(|s| s.to_string()).collect(),
             last_domain: Some(domain.to_string()),
+            ..Default::default()
         }
     }
 
@@ -3696,7 +4046,7 @@ mod write_tests {
 
 
     #[test]
-    fn nmh_get_logins_lookup_is_scoped_to_the_active_vault_only() {
+    fn nmh_get_logins_reads_every_unlocked_vault_active_first() {
         use crate::session_registry::SessionRegistry;
         use kokos_core::crypto::Argon2Params;
         use kokos_core::session::Session;
@@ -3760,53 +4110,47 @@ mod write_tests {
         session_b.vault = Some(vault_b);
         reg.insert("vault-a".to_string(), session_a);
         reg.insert("vault-b".to_string(), session_b);
-        assert!(reg.set_active("vault-a"));
 
-        let ids_while_a_active: Vec<String> = {
-            let v = reg
-                .active_mut()
-                .expect("A is active")
-                .vault
-                .as_ref()
-                .expect("A's vault is open");
-            kokos_core::logins::for_url(&v.conn, url, MAX_ITEMS)
-                .expect("lookup against the active (A) vault")
+        let pairs = |reg: &mut SessionRegistry| -> Vec<(String, String)> {
+            logins_across_vaults(reg, url)
+                .expect("an unlocked vault is readable")
                 .into_iter()
-                .map(|h| h.id)
+                .map(|(vid, h)| (vid, h.id))
                 .collect()
         };
+
+        assert!(reg.set_active("vault-a"));
         assert_eq!(
-            ids_while_a_active,
-            vec![entry_a.id.clone()],
-            "active=A must return ONLY A's entry"
-        );
-        assert!(
-            !ids_while_a_active.contains(&entry_b.id),
-            "B's login, present only in the non-active vault, must never be returned"
+            pairs(&mut reg),
+            vec![
+                ("vault-a".to_string(), entry_a.id.clone()),
+                ("vault-b".to_string(), entry_b.id.clone()),
+            ],
+            "active=A: both vaults' logins, A's first, each tagged with its own vault"
         );
 
         assert!(reg.set_active("vault-b"));
-        let ids_while_b_active: Vec<String> = {
-            let v = reg
-                .active_mut()
-                .expect("B is active")
-                .vault
-                .as_ref()
-                .expect("B's vault is open");
-            kokos_core::logins::for_url(&v.conn, url, MAX_ITEMS)
-                .expect("lookup against the active (B) vault")
-                .into_iter()
-                .map(|h| h.id)
-                .collect()
-        };
         assert_eq!(
-            ids_while_b_active,
-            vec![entry_b.id.clone()],
-            "active=B must return ONLY B's entry -- flipping set_active must flip the result"
+            pairs(&mut reg),
+            vec![
+                ("vault-b".to_string(), entry_b.id.clone()),
+                ("vault-a".to_string(), entry_a.id.clone()),
+            ],
+            "flipping set_active must flip the order, not the set"
         );
-        assert!(
-            !ids_while_b_active.contains(&entry_a.id),
-            "A's login, now the non-active vault, must never be returned"
+
+        assert!(reg.lock_one("vault-b"));
+        assert_eq!(
+            pairs(&mut reg),
+            vec![("vault-a".to_string(), entry_a.id.clone())],
+            "a locked vault is skipped while another one is unlocked"
+        );
+
+        assert!(reg.lock_one("vault-a"));
+        assert_eq!(
+            logins_across_vaults(&mut reg, url).map(|h| h.len()),
+            Err(codes::LOCKED),
+            "every vault locked answers locked"
         );
     }
 }
