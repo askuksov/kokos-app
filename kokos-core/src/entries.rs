@@ -297,7 +297,8 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Entry>> {
         let is_protected = r.get::<_, i64>(5)? != 0;
         let raw_value: Option<String> = r.get(4)?;
         let field_type: String = r.get(6)?;
-        let strength = if field_type == "secret" {
+        let template_id: Option<String> = r.get(2)?;
+        let strength = if crate::health::is_password_field(&entry.entry_type, &field_type, template_id.as_deref()) {
             raw_value.as_deref().filter(|s| !s.is_empty()).map(crate::strength::estimate)
         } else {
             None
@@ -305,7 +306,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Entry>> {
         Ok(Field {
             id: r.get(0)?,
             entry_id: r.get(1)?,
-            template_id: r.get(2)?,
+            template_id,
             name: r.get(3)?,
             value: if is_protected { None } else { raw_value },
             is_protected,
@@ -877,6 +878,29 @@ mod tests {
             );
             assert_eq!(user.strength, None, "[{label}] a non-secret field carries no strength");
         }
+    }
+
+    #[test]
+    fn get_scores_only_password_fields() {
+        let conn = crate::db::create_fresh().unwrap();
+        seed_entry(&conn, "card", "Visa", 0);
+        conn.execute("UPDATE entries SET entry_type = 'card' WHERE id = 'card'", []).unwrap();
+        seed_entry(&conn, "site", "Site", 0);
+        conn.execute(
+            "INSERT INTO entry_fields (id, entry_id, template_id, name, value, is_protected, field_type)
+             VALUES ('cvv', 'card', NULL, 'Security code (CVV)', '317', 1, 'secret'),
+                    ('pin', 'site', 'tpl_pin', 'PIN', '4821', 1, 'secret'),
+                    ('pw', 'site', 'tpl_password', 'Password', 'hunter2', 1, 'secret')",
+            [],
+        )
+        .unwrap();
+
+        let card = get(&conn, "card").unwrap().unwrap();
+        assert_eq!(card.fields[0].strength, None, "a card CVV gets no strength");
+        let site = get(&conn, "site").unwrap().unwrap();
+        let strength = |id: &str| site.fields.iter().find(|f| f.id == id).unwrap().strength;
+        assert_eq!(strength("pin"), None, "a PIN gets no strength");
+        assert_eq!(strength("pw"), Some(crate::strength::estimate("hunter2")));
     }
 
     #[test]
