@@ -15,6 +15,24 @@ use crate::error::Result;
 /// A secret field is "weak" when its 0-4 strength is <= this bound (Weak/Fair).
 const WEAK_MAX: u8 = 1;
 
+/// Built-in templates whose secret is a code or an answer, not a password.
+const NON_PASSWORD_TEMPLATES: [&str; 2] = ["tpl_pin", "tpl_security_answer"];
+
+/// Whether a field counts as a password for the strength meter, the health
+/// scan and the breach check. PINs, security answers and every secret on a
+/// card entry (CVV, card PIN) are short codes, so scoring them as passwords
+/// only produces false alarms.
+pub fn is_password_field(entry_type: &str, field_type: &str, template_id: Option<&str>) -> bool {
+    field_type == "secret"
+        && entry_type != "card"
+        && !template_id.is_some_and(|t| NON_PASSWORD_TEMPLATES.contains(&t))
+}
+
+/// SQL form of `is_password_field`; `e` binds `entries`, `ef` binds `entry_fields`.
+pub(crate) const PASSWORD_FIELD_SQL: &str = "ef.field_type = 'secret'
+           AND e.entry_type <> 'card'
+           AND (ef.template_id IS NULL OR ef.template_id NOT IN ('tpl_pin', 'tpl_security_answer'))";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeakField {
     pub entry_id: String,
@@ -42,15 +60,14 @@ pub struct HealthReport {
 }
 
 pub fn scan(conn: &Connection) -> Result<HealthReport> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT e.id, e.title, ef.name, ef.value
          FROM entries e
          JOIN entry_fields ef ON ef.entry_id = e.id
          WHERE e.is_deleted = 0
-           AND ef.field_type = 'secret'
-           AND (ef.template_id IS NULL OR ef.template_id NOT IN ('tpl_pin', 'tpl_security_answer'))
-         ORDER BY e.title COLLATE NOCASE ASC, e.id ASC, ef.sort_order ASC, ef.id ASC",
-    )?;
+           AND {PASSWORD_FIELD_SQL}
+         ORDER BY e.title COLLATE NOCASE ASC, e.id ASC, ef.sort_order ASC, ef.id ASC"
+    ))?;
 
     let mut weak: Vec<WeakField> = Vec::new();
     let mut groups: HashMap<[u8; 20], Vec<HealthEntryRef>> = HashMap::new();
@@ -304,6 +321,38 @@ mod tests {
         let r = scan(&conn).unwrap();
         assert_eq!(r.weak.len(), 1, "only the password field is in scope");
         assert_eq!(r.weak[0].field_name, "Password");
+    }
+
+    #[test]
+    fn card_secrets_are_out_of_scope() {
+        let conn = db::create_fresh().unwrap();
+        seed_entry(&conn, "card", "Visa", 0);
+        conn.execute("UPDATE entries SET entry_type = 'card' WHERE id = 'card'", [])
+            .unwrap();
+        seed_secret(&conn, "cvv", "card", "Security code (CVV)", None, "317");
+        seed_secret(&conn, "cpin", "card", "PIN", Some("tpl_pin"), "4821");
+        seed_entry(&conn, "card2", "Mastercard", 0);
+        conn.execute("UPDATE entries SET entry_type = 'card' WHERE id = 'card2'", [])
+            .unwrap();
+        seed_secret(&conn, "cvv2", "card2", "Security code (CVV)", None, "317");
+        seed_entry(&conn, "site", "Site", 0);
+        seed_secret(&conn, "pw", "site", "Password", Some("tpl_password"), "qwerty");
+
+        let r = scan(&conn).unwrap();
+        let ids: Vec<&str> = r.weak.iter().map(|w| w.entry_id.as_str()).collect();
+        assert_eq!(ids, vec!["site"], "only the login password is weak");
+        assert!(r.reused.is_empty(), "equal CVVs on two cards are not reuse");
+    }
+
+    #[test]
+    fn is_password_field_matches_scan_scope() {
+        assert!(is_password_field("login", "secret", Some("tpl_password")));
+        assert!(is_password_field("login", "secret", None));
+        assert!(is_password_field("wifi", "secret", Some("tpl_password")));
+        assert!(!is_password_field("card", "secret", None));
+        assert!(!is_password_field("login", "secret", Some("tpl_pin")));
+        assert!(!is_password_field("login", "secret", Some("tpl_security_answer")));
+        assert!(!is_password_field("login", "text", Some("tpl_username")));
     }
 
     #[test]
