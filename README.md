@@ -1,7 +1,13 @@
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" alt="Kokos icon" width="128">
+</p>
+
 # Kokos Password Manager
 
 **Kokos Password Manager** is a local-first, encrypted password manager for the
 desktop.
+
+Website: [kokos.kuksov.dev](https://kokos.kuksov.dev)
 
 A vault is a single `.kokos` file on your own disk, encrypted with
 XChaCha20-Poly1305 under a key derived from your master password with Argon2id.
@@ -34,6 +40,26 @@ interface. It runs on macOS, Linux and Windows.
   [kokos-extension](https://github.com/askuksov/kokos-extension).
 - **Auto-lock and clipboard auto-clear.** Optional Touch ID or keychain unlock
   on macOS.
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
+  <img src="docs/images/main-light.png" alt="A vault with its folders, entry list and an open login" width="720">
+</picture>
+</p>
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/health-dark.png">
+  <img src="docs/images/health-light.png" alt="Password health: weak and reused passwords" width="356">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/vaults-dark.png">
+  <img src="docs/images/vaults-light.png" alt="Two vaults open in tabs" width="356">
+</picture>
+</p>
+
+More in [docs/screenshots.md](docs/screenshots.md).
 
 ## Install
 
