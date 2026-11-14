@@ -82,18 +82,17 @@ impl HibpQuery {
 }
 
 /// Build a range query per in-scope secret. SAME scope as `health::scan`:
-/// live entries, `field_type='secret'`, minus `tpl_pin`/`tpl_security_answer`,
-/// non-empty. Plaintext is hashed and zeroized here — it never leaves.
+/// live entries, password fields only (`health::is_password_field`), non-empty. Plaintext is hashed and zeroized here — it never leaves.
 pub fn scan_queries(conn: &Connection) -> Result<Vec<HibpQuery>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT e.id, e.title, ef.name, ef.value
          FROM entries e
          JOIN entry_fields ef ON ef.entry_id = e.id
          WHERE e.is_deleted = 0
-           AND ef.field_type = 'secret'
-           AND (ef.template_id IS NULL OR ef.template_id NOT IN ('tpl_pin', 'tpl_security_answer'))
+           AND {}
          ORDER BY e.title COLLATE NOCASE ASC, e.id ASC, ef.sort_order ASC, ef.id ASC",
-    )?;
+        crate::health::PASSWORD_FIELD_SQL
+    ))?;
 
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -237,6 +236,10 @@ mod tests {
         );
         seed_secret(&conn, "pin", "e", "PIN", Some("tpl_pin"), "1234");
         seed_secret(&conn, "empty", "e", "Old", None, "");
+        seed_entry(&conn, "card", "Visa", 0);
+        conn.execute("UPDATE entries SET entry_type = 'card' WHERE id = 'card'", [])
+            .unwrap();
+        seed_secret(&conn, "cvv", "card", "Security code (CVV)", None, "317");
         conn.execute(
             "INSERT INTO entry_fields (id, entry_id, template_id, name, value, is_protected, field_type)
              VALUES ('note','e',NULL,'Note','hi',0,'text')",
