@@ -5,9 +5,10 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-# Floor set by dependencies: ort 2.0.0-rc.13, image, time, plist and darling
-# declare rust-version 1.88. Active toolchain is 1.90.
-rust-version = "1.88"
+# Floor set by dependencies: rusqlite 0.43 declares rust-version 1.89
+# (ort 2.0.0-rc.13, image, time, plist and darling need 1.88). Active
+# toolchain is 1.90.
+rust-version = "1.89"
 # Application crates, never published to crates.io.
 publish = false
 license = "MIT"

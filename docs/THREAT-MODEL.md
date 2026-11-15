@@ -356,8 +356,9 @@ enters the tiny NMH binary or the crypto core (checkable with
 
 MSRV note: adding local AI raised the workspace `rust-version` from 1.77 to
 1.85 (`ort`/`tokenizers` pull `edition2024` transitive deps, e.g.
-`rand_pcg 0.10`), and later dependency updates raised it to 1.88 (`ort`
-2.0.0-rc.13, `image`, `time`, `plist`, `darling`). The workspace crates are not
+`rand_pcg 0.10`), later dependency updates raised it to 1.88 (`ort`
+2.0.0-rc.13, `image`, `time`, `plist`, `darling`), and `rusqlite` 0.43 raised
+it to 1.89. The workspace crates are not
 published to crates.io (`publish = false`), so there are no external MSRV
 consumers.
 

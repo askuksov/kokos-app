@@ -90,8 +90,8 @@ pub fn create(
         nonce,
     };
 
-    let conn = db::create_fresh()?;
-    write_container(&conn, &header, &key, path)?;
+    let mut conn = db::create_fresh()?;
+    write_container(&mut conn, &header, &key, path)?;
     Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false, backup_taken: false })
 }
 
@@ -180,7 +180,7 @@ pub fn save(v: &mut OpenVault) -> Result<()> {
     crate::db::set_sync_revision(&v.conn, next_rev)?;
     backup_before_first_migrated_save(v)?;
     v.header.nonce = crypto::random_nonce();
-    write_container(&v.conn, &v.header, &v.key, &v.path)?;
+    write_container(&mut v.conn, &v.header, &v.key, &v.path)?;
     v.migrated = false;
     Ok(())
 }
@@ -242,7 +242,7 @@ pub fn change_password(
     let new_key = crypto::derive_key(&material, &new_header.salt, new_header.kdf)?;
 
     atomic::backup(&v.path)?;
-    write_container(&v.conn, &new_header, &new_key, &v.path)?;
+    write_container(&mut v.conn, &new_header, &new_key, &v.path)?;
     let _ = std::fs::remove_file(atomic::backup_path(&v.path));
 
     v.header = new_header;
@@ -310,12 +310,12 @@ pub fn verify_password(v: &OpenVault, password: &[u8], keyfile: Option<&Path>) -
 pub fn save_opened(v: &mut OpenVault) -> Result<()> {
     backup_before_first_migrated_save(v)?;
     v.header.nonce = crypto::random_nonce();
-    write_container(&v.conn, &v.header, &v.key, &v.path)?;
+    write_container(&mut v.conn, &v.header, &v.key, &v.path)?;
     v.migrated = false;
     Ok(())
 }
 
-fn write_container(conn: &Connection, header: &Header, key: &[u8; KEY_LEN], path: &Path) -> Result<()> {
+fn write_container(conn: &mut Connection, header: &Header, key: &[u8; KEY_LEN], path: &Path) -> Result<()> {
     let image = db::serialize(conn)?;
     let ciphertext = crypto::encrypt(key, &header.nonce, &image)?;
 
@@ -474,8 +474,8 @@ mod tests {
         let material = key_material(b"pw", None).unwrap();
         let key = crypto::derive_key(&material, &salt, weak).unwrap();
         let header = Header { version: CURRENT_VERSION, flags: 0, hint: String::new(), kdf: weak, salt, nonce };
-        let conn = db::create_fresh().unwrap();
-        write_container(&conn, &header, &key, &path).unwrap();
+        let mut conn = db::create_fresh().unwrap();
+        write_container(&mut conn, &header, &key, &path).unwrap();
         drop(conn);
         assert!(open(&path, b"pw", None).is_ok(), "open must read below-floor (Go-parity) vaults");
     }

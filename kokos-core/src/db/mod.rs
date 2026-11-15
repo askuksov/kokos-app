@@ -28,7 +28,7 @@ pub fn open_in_memory(image: &[u8]) -> Result<Connection> {
         rusqlite::serialize::OwnedData::from_raw_nonnull(nn, image.len())
     };
 
-    conn.deserialize(rusqlite::DatabaseName::Main, owned, false)?;
+    conn.deserialize(rusqlite::MAIN_DB, owned, false)?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     Ok(conn)
 }
@@ -47,8 +47,8 @@ pub fn open_in_memory(image: &[u8]) -> Result<Connection> {
 /// `sqlite3_malloc`'d copy made in `open_in_memory`, both live inside
 /// rusqlite/SQLite and are freed without zeroing. That memory is out of
 /// reach from this module.
-pub fn serialize(conn: &Connection) -> Result<Zeroizing<Vec<u8>>> {
-    let data = conn.serialize(rusqlite::DatabaseName::Main)?;
+pub fn serialize(conn: &mut Connection) -> Result<Zeroizing<Vec<u8>>> {
+    let data = conn.serialize(rusqlite::MAIN_DB)?;
     Ok(Zeroizing::new(data.to_vec()))
 }
 
@@ -216,13 +216,13 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_preserves_rows() {
-        let c = create_fresh().unwrap();
+        let mut c = create_fresh().unwrap();
         c.execute(
             "INSERT INTO entries (id, folder_id, title, created_at, updated_at) VALUES ('e1', 'root', 'T', 1, 1)",
             [],
         )
         .unwrap();
-        let image: Zeroizing<Vec<u8>> = serialize(&c).unwrap();
+        let image: Zeroizing<Vec<u8>> = serialize(&mut c).unwrap();
         let restored = open_in_memory(&image).unwrap();
         let title: String = restored.query_row("SELECT title FROM entries WHERE id='e1'", [], |r| r.get(0)).unwrap();
         assert_eq!(title, "T");
@@ -445,8 +445,8 @@ mod tests {
 
     #[test]
     fn open_in_memory_enables_foreign_keys() {
-        let c = create_fresh().unwrap();
-        let image = serialize(&c).unwrap();
+        let mut c = create_fresh().unwrap();
+        let image = serialize(&mut c).unwrap();
         let restored = open_in_memory(&image).unwrap();
 
         let err = restored.execute(
