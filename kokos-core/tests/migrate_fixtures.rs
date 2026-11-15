@@ -3,7 +3,7 @@ use kokos_core::db::{migrate::migrate, open_in_memory};
 /// Builds a legacy v1 image: the schema as the Go version leaves it —
 /// no is_favorite, no entry_field_history, favorite stored as a tag.
 fn legacy_image() -> Vec<u8> {
-    let c = rusqlite::Connection::open_in_memory().unwrap();
+    let mut c = rusqlite::Connection::open_in_memory().unwrap();
     c.execute_batch(
         r#"
         CREATE TABLE folders (id TEXT PRIMARY KEY, parent_id TEXT, name TEXT NOT NULL,
@@ -37,7 +37,7 @@ fn legacy_image() -> Vec<u8> {
         "#,
     )
     .unwrap();
-    c.serialize(rusqlite::DatabaseName::Main).unwrap().to_vec()
+    c.serialize(rusqlite::MAIN_DB).unwrap().to_vec()
 }
 
 #[test]

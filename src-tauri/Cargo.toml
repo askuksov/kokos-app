@@ -44,7 +44,7 @@ kokos-ai = { path = "../kokos-ai" }
 # `build_candidates` bound. Same 0.32 + bundled/serialize already used
 # transitively via kokos-core, so no NEW crate enters the graph; Cargo.lock
 # gains only a one-line edge to the existing rusqlite package.
-rusqlite = { version = "0.32", features = ["bundled", "serialize"] }
+rusqlite = { version = "0.43", features = ["bundled", "serialize"] }
 zeroize = { workspace = true }
 rfd = "0.17"
 arboard = { version = "3", default-features = false }
