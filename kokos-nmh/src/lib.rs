@@ -4,6 +4,7 @@
 //! must be unable to touch a vault file or a key.
 
 pub mod framing;
+pub mod idle;
 pub mod protocol;
 pub mod origin;
 pub mod transport;
