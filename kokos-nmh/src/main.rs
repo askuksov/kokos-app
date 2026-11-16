@@ -7,6 +7,7 @@
 use std::io;
 
 use kokos_nmh::framing::{read_frame, write_frame};
+use kokos_nmh::idle::{spawn_watchdog, Activity, IDLE_EXIT, IDLE_TICK};
 use kokos_nmh::origin::{from_args, Caller};
 use kokos_nmh::protocol::{codes, parse_request, Hello, HelloFrame, Response, PROTOCOL_VERSION};
 use kokos_nmh::transport::{connect, read_token, timeout_for, Conn};
@@ -21,13 +22,22 @@ fn main() {
     let mut writer = stdout.lock();
     let mut conn: Option<Conn> = None;
 
+    // A port the browser never closes would keep this process alive for the
+    // browser's lifetime; exit on our own once nothing has happened for a while.
+    let activity = Activity::new();
+    spawn_watchdog(activity.clone(), IDLE_EXIT, IDLE_TICK, || {
+        std::process::exit(0)
+    });
+
     while let Ok(Some(frame)) = read_frame(&mut reader) {
+        activity.begin();
         let response = handle(&frame, caller.as_ref(), &mut conn);
         let bytes = serde_json::to_vec(&response)
             .unwrap_or_else(|_| br#"{"id":"","ok":false,"payload":null,"error":{"code":"internal","message":"response serialisation failed"}}"#.to_vec());
         if write_frame(&mut writer, &bytes).is_err() {
             break;
         }
+        activity.end();
     }
 }
 
