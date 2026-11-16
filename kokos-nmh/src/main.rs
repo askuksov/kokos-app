@@ -30,7 +30,11 @@ fn main() {
     });
 
     while let Ok(Some(frame)) = read_frame(&mut reader) {
-        activity.begin();
+        if !activity.begin() {
+            // The watchdog already decided to exit: drop the frame unhandled
+            // so nothing reaches the app without an answer going back.
+            break;
+        }
         let response = handle(&frame, caller.as_ref(), &mut conn);
         let bytes = serde_json::to_vec(&response)
             .unwrap_or_else(|_| br#"{"id":"","ok":false,"payload":null,"error":{"code":"internal","message":"response serialisation failed"}}"#.to_vec());
