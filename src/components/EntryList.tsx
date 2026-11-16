@@ -9,6 +9,7 @@ import type { EntrySummary, FolderNode, Tag, View } from "../ipc/types";
 import { tagColor } from "../lib/tagColors";
 import { entryTypeMeta } from "../lib/entryTypes";
 import { monogram } from "../lib/monogram";
+import { subtreeCount } from "../lib/folderCounts";
 import { useClipboard } from "../state/ClipboardContext";
 import "./EntryList.css";
 
@@ -292,12 +293,19 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
     }
   }
 
+  // The list shows only entries filed directly in the selected folder; the
+  // sidebar badge also counts subfolders. Surface the difference here so a
+  // parent folder with an empty own list does not look like lost data.
+  const navFolder = nav.kind === "folder" ? findFolder(folders, nav.id) : null;
+  const inSubfolders = navFolder && !search.trim() ? subtreeCount(navFolder) - navFolder.entry_count : 0;
+
   return (
     <section className="kv-list">
       <div className="kv-list-head">
         <div className="kv-list-title">
           {navTitle(t, nav, folders, tags)}
           <span className="n">{visibleEntries.length}</span>
+          {inSubfolders > 0 ? <span className="n">{t("list.inSubfolders", { n: inSubfolders })}</span> : null}
         </div>
         <button
           type="button"
@@ -337,7 +345,9 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
                   ? t("list.noMatches")
                   : nav.kind === "view" && nav.view === "all"
                     ? t("list.noEntries")
-                    : t("list.emptyView")}
+                    : inSubfolders > 0
+                      ? t("list.emptyFolderHasSub", { n: inSubfolders })
+                      : t("list.emptyView")}
               </p>
             </div>
           ) : null

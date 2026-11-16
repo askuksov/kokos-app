@@ -103,8 +103,13 @@ export function VaultProvider({ children, vaultId }: { children: React.ReactNode
   }, []);
 
   const refreshStatus = useCallback(async () => setStatus(await vaultStatus(vaultId)), [vaultId]);
+  // Folder badges carry per-folder entry counts, so every entry refresh
+  // (save, delete, restore, move, a save from the extension) reloads the
+  // tree too; otherwise the sidebar keeps the counts from vault open.
   const refreshEntries = useCallback(async () => {
-    setEntries(await listEntries(serverView(nav), vaultId));
+    const [list, tree] = await Promise.all([listEntries(serverView(nav), vaultId), listFolders(vaultId)]);
+    setEntries(list);
+    setFolders(tree);
     setEntriesLoaded(true);
   }, [nav, vaultId]);
   const refreshFolders = useCallback(async () => setFolders(await listFolders(vaultId)), [vaultId]);
