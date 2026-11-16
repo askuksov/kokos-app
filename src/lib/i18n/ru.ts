@@ -69,6 +69,7 @@ export const ru: Record<string, string> = {
   "topbar.untitled": "Хранилище",
 
   "sidebar.dragReorderHint": "Перетащите, чтобы изменить порядок · перетащите на папку, чтобы вложить",
+  "sidebar.countSplit": "{direct} в этой папке · {total} вместе с подпапками",
   "sidebar.searchPlaceholder": "Поиск…",
   "sidebar.searchAriaLabel": "Поиск записей",
   "sidebar.searchFilters": "Фильтры поиска",
@@ -86,6 +87,8 @@ export const ru: Record<string, string> = {
   "list.noEntries": "Нет записей.",
   "list.noMatches": "Нет совпадений.",
   "list.emptyView": "Здесь пока пусто.",
+  "list.emptyFolderHasSub": "В самой папке записей нет — {n} в подпапках.",
+  "list.inSubfolders": "+{n} в подпапках",
   "list.folderFallback": "Папка",
   "list.tagFallback": "Тег",
   "list.select": "Выбрать",

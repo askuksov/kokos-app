@@ -150,6 +150,7 @@
 }
 
 .kv-count {
+  white-space: nowrap;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--text-3);

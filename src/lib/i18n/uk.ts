@@ -69,6 +69,7 @@ export const uk: Record<string, string> = {
   "topbar.untitled": "Сховище",
 
   "sidebar.dragReorderHint": "Перетягніть, щоб змінити порядок · перетягніть на папку, щоб вкласти",
+  "sidebar.countSplit": "{direct} у цій папці · {total} разом із підпапками",
   "sidebar.searchPlaceholder": "Пошук…",
   "sidebar.searchAriaLabel": "Пошук записів",
   "sidebar.searchFilters": "Фільтри пошуку",
@@ -86,6 +87,8 @@ export const uk: Record<string, string> = {
   "list.noEntries": "Немає записів.",
   "list.noMatches": "Немає збігів.",
   "list.emptyView": "Тут поки що порожньо.",
+  "list.emptyFolderHasSub": "У самій папці записів немає — {n} у підпапках.",
+  "list.inSubfolders": "+{n} у підпапках",
   "list.folderFallback": "Папка",
   "list.tagFallback": "Тег",
   "list.select": "Вибрати",

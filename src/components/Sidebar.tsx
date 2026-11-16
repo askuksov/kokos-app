@@ -5,6 +5,7 @@ import { useT } from "../state/LangContext";
 import { lockVault, listEntries, listTrash, moveFolder, reorderFolder } from "../ipc/commands";
 import type { FolderNode, View } from "../ipc/types";
 import { tagColor } from "../lib/tagColors";
+import { subtreeCount } from "../lib/folderCounts";
 import { clearClipboard } from "../lib/clipboard";
 import { useClipboard } from "../state/ClipboardContext";
 import { ThemeToggle } from "./ThemeToggle";
@@ -104,10 +105,6 @@ function Icon({
       {ICON_PATHS[name]}
     </svg>
   );
-}
-
-function subtreeCount(node: FolderNode): number {
-  return node.children.reduce((sum, child) => sum + subtreeCount(child), node.entry_count);
 }
 
 type DropPos = "before" | "after" | "inside";
@@ -296,7 +293,8 @@ export function Sidebar() {
     const hasChildren = node.children.length > 0;
     const isCollapsed = collapsed.has(node.id);
     const isActive = route === "main" && nav.kind === "folder" && nav.id === node.id;
-    const count = subtreeCount(node);
+    const direct = node.entry_count;
+    const total = subtreeCount(node);
     const dropPos = drop && drop.id === node.id ? drop.pos : null;
     return (
       <Fragment key={node.id}>
@@ -340,7 +338,15 @@ export function Sidebar() {
           </span>
           <Icon name="folder" className="kv-ico" />
           <span className="label">{node.name}</span>
-          {count > 0 ? <span className="kv-count">{count}</span> : null}
+          {total === 0 ? null : direct === total ? (
+            <span className="kv-count">{total}</span>
+          ) : (
+            // Direct entries differ from the subtree total: show both so a
+            // parent with an empty own list never reads as "9" alone.
+            <span className="kv-count" title={t("sidebar.countSplit", { direct, total })}>
+              {direct} / {total}
+            </span>
+          )}
         </button>
         {!isCollapsed ? node.children.map((child) => renderFolder(child, depth + 1)) : null}
       </Fragment>

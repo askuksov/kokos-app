@@ -69,6 +69,7 @@ export const en: Record<string, string> = {
   "topbar.untitled": "Vault",
 
   "sidebar.dragReorderHint": "Drag to reorder · drop onto a folder to nest",
+  "sidebar.countSplit": "{direct} in this folder · {total} including subfolders",
   "sidebar.searchPlaceholder": "Search…",
   "sidebar.searchAriaLabel": "Search entries",
   "sidebar.searchFilters": "Search filters",
@@ -86,6 +87,8 @@ export const en: Record<string, string> = {
   "list.noEntries": "No entries.",
   "list.noMatches": "No matches.",
   "list.emptyView": "Nothing here yet.",
+  "list.emptyFolderHasSub": "No entries directly in this folder — {n} in subfolders.",
+  "list.inSubfolders": "+{n} in subfolders",
   "list.folderFallback": "Folder",
   "list.tagFallback": "Tag",
   "list.select": "Select",
