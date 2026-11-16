@@ -36,8 +36,10 @@ interface. It runs on macOS, Linux and Windows.
   and AI-assisted import of passwords kept in plain text files. The AI model runs
   locally; nothing you import is sent anywhere.
 - **Browser extension** for saving and filling logins, over a local
-  native-messaging bridge with per-site permission:
-  [kokos-extension](https://github.com/askuksov/kokos-extension).
+  native-messaging bridge with per-site permission. Install it from the
+  [Chrome Web Store](https://chromewebstore.google.com/detail/kokos/bomiboipfgkkpdpdgpnanimjkilabddb)
+  or [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/kokos-password-manager/);
+  source in [kokos-extension](https://github.com/askuksov/kokos-extension).
 - **Auto-lock and clipboard auto-clear.** Optional Touch ID or keychain unlock
   on macOS.
 
