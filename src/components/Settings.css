@@ -170,15 +170,37 @@
   background: var(--accent);
 }
 
+/* Same shape for every browser: label + status on top, then the ID field
+   (as wide as the row allows) with the buttons pinned to the right. */
+.kv-nmh-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
 .kv-nmh-row-controls {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  padding: 0 4px;
 }
 .kv-settings .kv-nmh-row-controls .kv-nmh-id {
-  flex: none;
-  width: 220px;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.kv-nmh-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.kv-nmh-done {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 1.5em;
+  margin: 4px 4px 0;
+  color: var(--accent);
 }
 
 .kv-nmh-grant-group {

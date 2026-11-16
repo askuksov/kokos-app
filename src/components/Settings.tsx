@@ -71,10 +71,11 @@ import "./Settings.css";
 
 type StorageMode = "off" | "password" | "touchid";
 
-type SettingsIcon = "chevronLeft";
+type SettingsIcon = "chevronLeft" | "check";
 
 const ICON_PATHS: Record<SettingsIcon, React.ReactNode> = {
   chevronLeft: <path d="M14.5 6.5l-5.5 5.5 5.5 5.5" />,
+  check: <path d="M5 13l4.2 4.2L19 7.5" />,
 };
 
 function Icon({
@@ -140,6 +141,16 @@ const NMH_CONFIRM_MODES: readonly { value: string; labelKey: string }[] = [
   { value: "remember_site", labelKey: "settings.nmhConfirmRemember" },
   { value: "trust_extension", labelKey: "settings.nmhConfirmTrust" },
 ];
+
+type NmhBrowser = "chrome" | "firefox";
+type NmhDone = { browser: NmhBrowser; kind: "installed" | "updated" | "removed" };
+// How long the Installed / Updated / Removed line stays under a browser row.
+const NMH_DONE_MS = 4000;
+const NMH_DONE_KEYS: Record<NmhDone["kind"], string> = {
+  installed: "settings.nmhDoneInstalled",
+  updated: "settings.nmhDoneUpdated",
+  removed: "settings.nmhDoneRemoved",
+};
 
 type NmhGrantGroup = { origin: string; browser: string; grants: NmhGrantDto[] };
 
@@ -921,6 +932,16 @@ export function Settings() {
   const nmhSeededRef = useRef(false);
   // Fields the user typed into before that first fill; it leaves them alone.
   const nmhEditedRef = useRef({ chrome: false, firefox: false });
+  // Which browser row is mid-call, and the short-lived result line under it.
+  const [nmhAction, setNmhAction] = useState<{ browser: NmhBrowser; kind: "install" | "remove" } | null>(null);
+  const [nmhDone, setNmhDone] = useState<NmhDone | null>(null);
+  const nmhDoneTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (nmhDoneTimerRef.current !== null) window.clearTimeout(nmhDoneTimerRef.current);
+    },
+    [],
+  );
 
   const [hibpBusy, setHibpBusy] = useState(false);
 
@@ -1191,38 +1212,59 @@ export function Settings() {
     textImport.start({ kind: "folder", dir: d });
   }
 
-  async function onNmhInstall(browser: "chrome" | "firefox") {
+  function startNmhAction(browser: NmhBrowser, kind: "install" | "remove") {
+    if (nmhDoneTimerRef.current !== null) {
+      window.clearTimeout(nmhDoneTimerRef.current);
+      nmhDoneTimerRef.current = null;
+    }
+    setNmhDone(null);
+    setNmhErr(null);
+    setNmhAction({ browser, kind });
+    setNmhBusy(true);
+  }
+
+  function finishNmhAction(done: NmhDone | null) {
+    setNmhAction(null);
+    setNmhBusy(false);
+    if (!done) return;
+    setNmhDone(done);
+    nmhDoneTimerRef.current = window.setTimeout(() => {
+      nmhDoneTimerRef.current = null;
+      setNmhDone(null);
+    }, NMH_DONE_MS);
+  }
+
+  async function onNmhInstall(browser: NmhBrowser) {
     if (nmhBusy) return;
     const id = (browser === "chrome" ? chromeId : firefoxId).trim();
     if (!id) return;
-    setNmhErr(null);
-    setNmhBusy(true);
+    const wasRegistered = (browser === "chrome" ? nmhSt?.chrome_registered : nmhSt?.firefox_registered) ?? false;
+    startNmhAction(browser, "install");
     try {
       await nmhInstall(browser, id);
     } catch (err) {
       setNmhErr(mapNmhError(err));
-      setNmhBusy(false);
+      finishNmhAction(null);
       return;
     }
     await refreshNmh(browser);
     await refreshSettings();
-    setNmhBusy(false);
+    finishNmhAction({ browser, kind: wasRegistered ? "updated" : "installed" });
   }
 
-  async function onNmhUninstall(browser: "chrome" | "firefox") {
+  async function onNmhUninstall(browser: NmhBrowser) {
     if (nmhBusy) return;
-    setNmhErr(null);
-    setNmhBusy(true);
+    startNmhAction(browser, "remove");
     try {
       await nmhUninstall(browser);
     } catch (err) {
       setNmhErr(mapNmhError(err));
-      setNmhBusy(false);
+      finishNmhAction(null);
       return;
     }
     await refreshNmh(browser);
     await refreshSettings();
-    setNmhBusy(false);
+    finishNmhAction({ browser, kind: "removed" });
   }
 
   const [grants, setGrants] = useState<NmhGrantDto[]>([]);
@@ -2065,6 +2107,9 @@ export function Settings() {
 
           {nmhBrowserRows.map((row) => {
             const hasIds = row.idCount > 0;
+            const installing = nmhAction?.browser === row.browser && nmhAction.kind === "install";
+            const removing = nmhAction?.browser === row.browser && nmhAction.kind === "remove";
+            const done = nmhDone?.browser === row.browser ? nmhDone : null;
             return (
               <div key={row.browser}>
                 <div className="kv-settings-row">
@@ -2072,65 +2117,77 @@ export function Settings() {
                     <span className="kv-settings-row-label">{row.label}</span>
                     <span className="kv-settings-row-hint">{row.hint}</span>
                   </div>
-                  <div className="kv-nmh-row-controls">
-                    <input
-                      className="kv-input kv-nmh-id"
-                      aria-label={row.label}
-                      value={row.id}
-                      onChange={(e) => {
-                        nmhEditedRef.current[row.browser] = true;
-                        row.setId(e.target.value);
-                      }}
-                      disabled={nmhBusy}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      spellCheck={false}
-                    />
-                    {row.id.trim() !== row.storeId && (
-                      <button
-                        type="button"
-                        className="kv-btn is-ghost"
-                        disabled={nmhBusy}
-                        onClick={(e) => {
-                          // The button disappears once the field holds the
-                          // store ID; keep keyboard focus on the field.
-                          const input = e.currentTarget.parentElement?.querySelector<HTMLInputElement>(
-                            "input.kv-nmh-id",
-                          );
-                          row.setId(row.storeId);
-                          input?.focus();
-                        }}
-                      >
-                        {t("settings.nmhUseStoreId")}
-                      </button>
-                    )}
+                  <span className="kv-nmh-state kv-settings-row-hint">
                     <span
                       className={"kv-nmh-dot" + (row.registered ? " is-on" : "")}
                       aria-hidden="true"
                     />
-                    <span className="kv-settings-row-hint">
-                      {row.registered ? t("settings.nmhRegistered") : t("settings.nmhNotRegistered")}
-                    </span>
+                    {row.registered ? t("settings.nmhRegistered") : t("settings.nmhNotRegistered")}
+                  </span>
+                </div>
+                <div className="kv-nmh-row-controls">
+                  <input
+                    className="kv-input kv-nmh-id"
+                    aria-label={row.label}
+                    value={row.id}
+                    onChange={(e) => {
+                      nmhEditedRef.current[row.browser] = true;
+                      row.setId(e.target.value);
+                    }}
+                    disabled={nmhBusy}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  {row.id.trim() !== row.storeId && (
+                    <button
+                      type="button"
+                      className="kv-btn is-ghost"
+                      disabled={nmhBusy}
+                      onClick={(e) => {
+                        // The button disappears once the field holds the
+                        // store ID; keep keyboard focus on the field.
+                        const input = e.currentTarget.parentElement?.querySelector<HTMLInputElement>(
+                          "input.kv-nmh-id",
+                        );
+                        row.setId(row.storeId);
+                        input?.focus();
+                      }}
+                    >
+                      {t("settings.nmhUseStoreId")}
+                    </button>
+                  )}
+                  <div className="kv-nmh-actions">
                     {(row.registered || hasIds) && (
                       <button
                         type="button"
                         className="kv-btn is-ghost"
                         disabled={nmhBusy}
+                        aria-busy={removing}
                         onClick={() => void onNmhUninstall(row.browser)}
                       >
-                        {t("settings.nmhRemove")}
+                        {removing ? t("settings.nmhRemoving") : t("settings.nmhRemove")}
                       </button>
                     )}
                     <button
                       type="button"
                       className="kv-btn is-primary"
                       disabled={nmhBusy || !row.id.trim() || !nmhSt?.host_path}
+                      aria-busy={installing}
                       onClick={() => void onNmhInstall(row.browser)}
                     >
-                      {t("settings.nmhInstall")}
+                      {installing ? t("settings.nmhInstalling") : t("settings.nmhInstall")}
                     </button>
                   </div>
                 </div>
+                {/* Always mounted so screen readers announce the text when it appears. */}
+                <p className="kv-settings-row-hint kv-nmh-done" role="status">
+                  {done && (
+                    <>
+                      <Icon name="check" /> {t(NMH_DONE_KEYS[done.kind])}
+                    </>
+                  )}
+                </p>
                 {row.idCount > 1 && (
                   <div className="kv-settings-row">
                     <span className="kv-settings-row-hint">
