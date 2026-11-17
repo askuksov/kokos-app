@@ -452,8 +452,11 @@ consumers.
   `close_to_tray` on (the default), closing the main window hides it and the
   process keeps running so the native-messaging host stays reachable
   (`src-tauri/src/tray.rs`). With `lock_on_close` on (also the default) every
-  vault is locked as the window hides, so the background process holds no key
-  and the extension sees "locked", not "unlocked". A user who turns
+  vault is locked right after the window hides: the lock runs on a background
+  thread (it saves each vault) and normally completes within a fraction of a
+  second. An extension request that already holds a grant and arrives in that
+  interval can still be answered; after it, the background process holds no
+  key and the extension sees "locked", not "unlocked". A user who turns
   `lock_on_close` off keeps vaults unlocked for longer than before: until the
   idle auto-lock (`auto_lock_minutes`, which still runs while hidden — only
   input in the window or an unlock resets the idle timer, extension requests
