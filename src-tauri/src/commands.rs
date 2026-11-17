@@ -5986,7 +5986,12 @@ fn gdrive_sync_gathered(
             let p = std::path::Path::new(vault_path);
             let _ = backup_conflict_copy(p, local_meta.rev);
             std::fs::write(p, &downloaded).map_err(|e| e.to_string())?;
-            save_gdrive_baseline(&dir, vault_path, &fid, remote_rev, remote_name.as_deref(), note.as_deref())?;
+            // The file is already replaced: an error here must not skip the caller's
+            // lock, or a stale in-memory save would overwrite the pulled vault. A stale
+            // baseline only costs one redundant transfer on the next sync.
+            if let Err(e) = save_gdrive_baseline(&dir, vault_path, &fid, remote_rev, remote_name.as_deref(), note.as_deref()) {
+                eprintln!("[sync] pulled vault written but baseline not saved: {e}");
+            }
             Ok(SyncOutcome { pulled: true, requires_reopen: true, ..Default::default() })
         }
         SyncDecision::InSync => {
