@@ -180,7 +180,9 @@ fn build_menu(app: &AppHandle, lang: &str, rows: &[VaultRow]) -> tauri::Result<M
     b.item(&PredefinedMenuItem::separator(app)?)
         .item(&MenuItem::with_id(app, ID_LOCK_ALL, l.lock_all, any_unlocked, None::<&str>)?)
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItem::with_id(app, ID_SETTINGS, l.settings, true, None::<&str>)?)
+        // Settings live inside an unlocked vault, so without one there is
+        // nothing to open.
+        .item(&MenuItem::with_id(app, ID_SETTINGS, l.settings, any_unlocked, None::<&str>)?)
         .item(&MenuItem::with_id(app, ID_QUIT, l.quit, true, cfg!(target_os = "macos").then_some("CmdOrCtrl+Q"))?)
         .build()
 }
@@ -366,6 +368,20 @@ fn sync_on_main(app: &AppHandle) {
     }
 }
 
+/// Re-check at close time on Linux: the tray host can go away after the icon
+/// was created (the AppIndicator extension disabled, the panel restarted),
+/// and hiding then would leave no way back. One short D-Bus round trip, only
+/// when the user closes the window.
+#[cfg(target_os = "linux")]
+fn available_now() -> bool {
+    status_notifier_watcher_present()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn available_now() -> bool {
+    true
+}
+
 /// The D-Bus probe is a round trip; the desktop does not change under a
 /// running process often enough to repeat it every tick.
 fn available_cached() -> bool {
@@ -431,7 +447,7 @@ pub fn on_close_requested(window: &tauri::Window) -> bool {
         .lock()
         .map(|s| (s.close_to_tray, s.tray_intro_seen))
         .unwrap_or((false, true));
-    if !want || !is_active(app) {
+    if !want || !is_active(app) || !available_now() {
         return false;
     }
     if intro_seen {

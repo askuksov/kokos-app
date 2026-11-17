@@ -36,10 +36,12 @@ pub fn run() {
     // be the first plugin. macOS needs none: LaunchServices reuses the
     // running app and reports the file through `RunEvent::Opened`.
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
         use tauri::{Emitter, Manager};
         if let Some(arg) = args.get(1) {
-            let p = std::path::PathBuf::from(arg);
+            // A relative path is relative to the second launch's directory,
+            // not this process's; `join` leaves an absolute one unchanged.
+            let p = std::path::Path::new(&cwd).join(arg);
             if p.is_file() {
                 *app.state::<state::AppState>().pending_open.lock().unwrap() = Some(p.clone());
                 let _ = app.emit("open-file-request", p.to_string_lossy().into_owned());

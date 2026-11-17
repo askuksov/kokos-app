@@ -24,6 +24,7 @@ import { useOnboarding } from "../lib/useOnboarding";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { VAULT_LOCKED, TRAY_OPEN_SETTINGS } from "../lib/events";
+import { takeTraySettingsRequest } from "../lib/traySettings";
 import { clearClipboard } from "../lib/clipboard";
 import { useClipboard } from "../state/ClipboardContext";
 
@@ -131,15 +132,20 @@ export function VaultScreen() {
     };
   }, [refreshStatus, resetClipboard]);
 
+  // Tray "Settings…". A running text-import review is minimized, not
+  // closed, so Settings is what shows and the import stays resumable.
+  const openSettingsFromTray = useCallback(() => {
+    if (source && !minimized) minimize();
+    setEditor(null);
+    setRoute("settings");
+  }, [source, minimized, minimize, setRoute]);
   useEffect(() => {
-    const un = listen(TRAY_OPEN_SETTINGS, () => {
-      setEditor(null);
-      setRoute("settings");
-    });
+    if (takeTraySettingsRequest()) openSettingsFromTray();
+    const un = listen(TRAY_OPEN_SETTINGS, openSettingsFromTray);
     return () => {
       un.then((f) => f());
     };
-  }, [setRoute]);
+  }, [openSettingsFromTray]);
 
   useEffect(() => {
     const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {

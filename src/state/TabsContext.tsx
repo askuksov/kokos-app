@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { switchVault, lockVault, lockAll, closeVault, getSettings, recentFiles, reorderVaults } from "../ipc/commands";
-import { VAULT_LOCKED, VAULT_UNLOCKED, MENU_NEW_VAULT, MENU_OPEN_VAULT, MENU_CLOSE_VAULT, MENU_LOCK_ALL, TRAY_FOCUS_VAULT } from "../lib/events";
+import { VAULT_LOCKED, VAULT_UNLOCKED, MENU_NEW_VAULT, MENU_OPEN_VAULT, MENU_CLOSE_VAULT, MENU_LOCK_ALL, TRAY_FOCUS_VAULT, TRAY_OPEN_SETTINGS } from "../lib/events";
+import { requestTraySettings } from "../lib/traySettings";
 import { vaultDisplayName } from "../lib/format";
 
 export type Tab = { vaultId: string; name: string; locked: boolean; registered: boolean };
@@ -35,6 +36,8 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   tabsRef.current = tabs;
   const activeIndexRef = useRef(activeIndex);
   activeIndexRef.current = activeIndex;
+  const addingRef = useRef(adding);
+  addingRef.current = adding;
   const switchSeqRef = useRef(0);
 
   const applyUnlocked = useCallback((vaultId: string) => {
@@ -214,6 +217,26 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     const un = listen<string>(TRAY_FOCUS_VAULT, (e) => {
       const idx = tabsRef.current.findIndex((t) => t.vaultId === e.payload);
       if (idx >= 0) activate(idx);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [activate]);
+
+  // Tray menu "Settings…": Settings live inside an unlocked vault screen. When
+  // one is showing it handles the event itself; otherwise switch to the
+  // active tab if unlocked, else the first unlocked one, and leave a request
+  // for its vault screen to pick up on mount.
+  useEffect(() => {
+    const un = listen(TRAY_OPEN_SETTINGS, () => {
+      const list = tabsRef.current;
+      const active = list[activeIndexRef.current];
+      const usable = (t: Tab | undefined) => !!t && !t.locked && t.registered;
+      if (usable(active) && !addingRef.current) return;
+      const idx = usable(active) ? activeIndexRef.current : list.findIndex(usable);
+      if (idx < 0) return;
+      requestTraySettings();
+      activate(idx);
     });
     return () => {
       un.then((f) => f());
