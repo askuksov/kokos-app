@@ -6029,7 +6029,7 @@ fn restore_file_known(files: &[crate::gdrive::api::RemoteFile], file_id: &str) -
 /// session (unlock to load the pulled state). All network work runs off the runtime.
 #[tauri::command]
 pub async fn sync_now(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: Option<String>) -> CmdResult<SyncOutcome> {
-    use tauri::Manager;
+    use tauri::{Emitter, Manager};
     let (id, vault_path) = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         let id = resolve_vault_id(&reg, vault_id.as_deref())?;
@@ -6099,6 +6099,8 @@ pub async fn sync_now(app: tauri::AppHandle, state: State<'_, AppState>, vault_i
                     drop(reg);
                     if locked {
                         crate::nmh::invalidate_confirms(&app);
+                        // Same event as lock_vault so tabs, clipboard and import listeners react.
+                        let _ = app.emit("vault-locked", serde_json::json!({ "vault_id": id }));
                     }
                     Ok(outcome)
                 }
