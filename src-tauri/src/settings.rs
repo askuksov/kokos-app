@@ -53,6 +53,14 @@ pub struct Settings {
     pub onboarding_import_done: bool,
     /// The user answered "Later" on the sync step, which completes it.
     pub onboarding_sync_deferred: bool,
+    /// Closing the main window hides it to the tray / menu bar instead of
+    /// quitting. Ignored (close quits) when no tray icon can be shown.
+    pub close_to_tray: bool,
+    /// Lock every vault when the window is hidden to the tray.
+    pub lock_on_close: bool,
+    /// The one-time "Kokos keeps running in the tray" dialog was answered
+    /// with "Hide to tray". Backend-written by `tray_hide_window`.
+    pub tray_intro_seen: bool,
 }
 
 impl Default for Settings {
@@ -83,6 +91,9 @@ impl Default for Settings {
             onboarding_backup_done: false,
             onboarding_import_done: false,
             onboarding_sync_deferred: false,
+            close_to_tray: true,
+            lock_on_close: true,
+            tray_intro_seen: false,
         }
     }
 }
@@ -123,7 +134,8 @@ pub fn save(dir: &Path, s: &Settings) -> std::io::Result<()> {
 /// `ai_enable`/`ai_disable` (audited download+verify) and the dev config — a
 /// direct flip here would bypass that audit.
 /// `onboarding_eligible`/`onboarding_backup_done`/`onboarding_import_done` are
-/// observations the backend makes, so the WebView cannot forge them; the other
+/// observations the backend makes, so the WebView cannot forge them, and so is
+/// `tray_intro_seen` (set by `tray_hide_window`); the other
 /// `onboarding_*` fields are plain user choices and stay editable.
 /// Everything else stays user-editable.
 pub fn preserve_backend_managed(incoming: &mut Settings, cached: &Settings) {
@@ -134,6 +146,7 @@ pub fn preserve_backend_managed(incoming: &mut Settings, cached: &Settings) {
     incoming.onboarding_eligible = cached.onboarding_eligible;
     incoming.onboarding_backup_done = cached.onboarding_backup_done;
     incoming.onboarding_import_done = cached.onboarding_import_done;
+    incoming.tray_intro_seen = cached.tray_intro_seen;
 }
 
 /// A one-shot event the getting-started card has no live state to query for.
@@ -407,6 +420,29 @@ mod tests {
         assert!(incoming.onboarding_dismissed, "dismiss stays user-editable");
         assert!(incoming.onboarding_collapsed, "collapse stays user-editable");
         assert!(incoming.onboarding_sync_deferred, "deferring sync stays user-editable");
+    }
+
+    #[test]
+    fn tray_settings_default_on_for_new_and_upgraded_installs() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("settings.json"), r#"{"lang":"ru"}"#).unwrap();
+        let s = load(d.path());
+        assert!(s.close_to_tray, "an existing settings.json without the field gets the default");
+        assert!(s.lock_on_close);
+        assert!(!s.tray_intro_seen);
+    }
+
+    #[test]
+    fn tray_intro_seen_is_backend_managed() {
+        let mut cached = Settings::default();
+        cached.tray_intro_seen = true;
+        let mut incoming = Settings::default();
+        incoming.close_to_tray = false;
+        incoming.lock_on_close = false;
+        preserve_backend_managed(&mut incoming, &cached);
+        assert!(incoming.tray_intro_seen, "the WebView cannot reset the intro flag");
+        assert!(!incoming.close_to_tray, "close_to_tray stays user-editable");
+        assert!(!incoming.lock_on_close, "lock_on_close stays user-editable");
     }
 
     #[test]

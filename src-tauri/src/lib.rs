@@ -16,6 +16,7 @@ mod state;
 pub mod session_registry;
 mod sync_config;
 mod synced_folder;
+mod tray;
 mod uninstall;
 mod vault_dir;
 
@@ -29,8 +30,32 @@ pub fn run() {
     if let Some(mode) = uninstall::mode_from_args(std::env::args_os()) {
         std::process::exit(uninstall::run(mode));
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // A second launch (shortcut, Start menu, double-clicked .kokos file)
+    // brings back the running instance instead of starting another one. Must
+    // be the first plugin. macOS needs none: LaunchServices reuses the
+    // running app and reports the file through `RunEvent::Opened`.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        use tauri::{Emitter, Manager};
+        if let Some(arg) = args.get(1) {
+            let p = std::path::PathBuf::from(arg);
+            if p.is_file() {
+                *app.state::<state::AppState>().pending_open.lock().unwrap() = Some(p.clone());
+                let _ = app.emit("open-file-request", p.to_string_lossy().into_owned());
+            }
+        }
+        tray::show_main(app);
+    }));
+    builder
         .manage(state::AppState::new())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if tray::on_close_requested(window) {
+                    api.prevent_close();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_vault_header_info,
             commands::create_vault,
@@ -171,6 +196,9 @@ pub fn run() {
             commands::gdrive_restore_bind,
             commands::gdrive_restore_cancel,
             commands::app_version,
+            tray::tray_hide_window,
+            tray::tray_supported,
+            tray::app_quit,
         ])
         .setup(|app| {
             use tauri::{Emitter, Manager};
@@ -266,19 +294,9 @@ pub fn run() {
                     })
                     .unwrap_or(false);
                 if autolock::should_lock(any_open, elapsed, minutes) {
-                    if let Ok(mut reg) = st.sessions.lock() {
-                        for s in reg.iter_mut() {
-                            if let Some(v) = s.vault.as_mut() {
-                                let _ = kokos_core::audit::append(&v.conn, "lock", None);
-                                let _ = kokos_core::vault::save(v);
-                            }
-                        }
-                        reg.lock_all();
-                        drop(reg);
-                        let _ = handle.emit("vault-locked", serde_json::json!({ "vault_id": null }));
-                        nmh::invalidate_confirms(&handle);
-                    }
+                    let _ = commands::lock_all_sessions(&handle);
                 }
+                tray::sync(&handle);
             });
 
             sleep_macos::install(app.handle().clone());
@@ -299,6 +317,8 @@ pub fn run() {
             if nmh_on {
                 nmh::start(app.handle().clone());
             }
+
+            tray::sync(app.handle());
 
             let handle = app.handle();
 
@@ -397,6 +417,12 @@ pub fn run() {
                             handle.emit("open-file-request", path.to_string_lossy().into_owned());
                     }
                 }
+                tray::show_main(handle);
+            }
+            // Dock icon click while the window is hidden.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                tray::show_main(handle);
             }
         });
 }

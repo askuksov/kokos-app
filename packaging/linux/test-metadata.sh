@@ -40,11 +40,15 @@ case "$deb_depends" in
   *libgtk-3-0*) ;;
   *) echo "FAIL: deb Depends lacks libgtk-3-0: $deb_depends"; fail=1 ;;
 esac
-# All three rpm dependencies get the same exact-line treatment, not just the
+case "$deb_depends" in
+  *libayatana-appindicator3-1*) ;;
+  *) echo "FAIL: deb Depends lacks libayatana-appindicator3-1: $deb_depends"; fail=1 ;;
+esac
+# All rpm dependencies get the same exact-line treatment, not just the
 # glibc one: every entry in bundle.linux.rpm.depends travels the same
 # unparsed path, so a future "webkit2gtk4.1 >= 2.44" would break exactly the
 # way "glibc >= 2.39" did, and a substring check could not tell.
-for req in 'libc.so.6(GLIBC_2.39)(64bit)' 'webkit2gtk4.1' 'gtk3'; do
+for req in 'libc.so.6(GLIBC_2.39)(64bit)' 'webkit2gtk4.1' 'gtk3' 'libayatana-appindicator-gtk3'; do
   printf '%s\n' "$rpm_requires" | grep -Fxq "$req" || {
     echo "FAIL: rpm Requires lacks $req"
     echo "requires were: $rpm_requires"; fail=1; }

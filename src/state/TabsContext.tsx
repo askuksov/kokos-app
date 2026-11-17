@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { switchVault, lockVault, lockAll, closeVault, getSettings, recentFiles, reorderVaults } from "../ipc/commands";
-import { VAULT_LOCKED, VAULT_UNLOCKED, MENU_NEW_VAULT, MENU_OPEN_VAULT, MENU_CLOSE_VAULT, MENU_LOCK_ALL } from "../lib/events";
+import { VAULT_LOCKED, VAULT_UNLOCKED, MENU_NEW_VAULT, MENU_OPEN_VAULT, MENU_CLOSE_VAULT, MENU_LOCK_ALL, TRAY_FOCUS_VAULT } from "../lib/events";
 import { vaultDisplayName } from "../lib/format";
 
 export type Tab = { vaultId: string; name: string; locked: boolean; registered: boolean };
@@ -206,6 +206,18 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [activate]);
+
+  // Tray menu "Unlock…" on a vault: bring its tab forward, where the lock
+  // screen asks for the password.
+  useEffect(() => {
+    const un = listen<string>(TRAY_FOCUS_VAULT, (e) => {
+      const idx = tabsRef.current.findIndex((t) => t.vaultId === e.payload);
+      if (idx >= 0) activate(idx);
+    });
+    return () => {
+      un.then((f) => f());
+    };
   }, [activate]);
 
   const lockActive = useCallback(async () => {

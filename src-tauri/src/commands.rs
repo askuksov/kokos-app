@@ -816,8 +816,17 @@ pub async fn lock_vault(
 /// through `spawn_blocking` itself. Always emits `{ vault_id: null }`, the
 /// same "everyone locked" shape the idle-lock watcher uses.
 #[tauri::command]
-pub fn lock_all(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    use tauri::Emitter;
+pub fn lock_all(app: tauri::AppHandle) -> CmdResult<()> {
+    lock_all_sessions(&app)
+}
+
+/// Audit + save + lock every open vault, then tell the WebView and drop the
+/// pending extension confirms. Shared by `lock_all`, the idle-lock watcher,
+/// and the tray (Lock All, hide-to-tray with `lock_on_close`). Does blocking
+/// I/O: call it off the main thread.
+pub(crate) fn lock_all_sessions(app: &tauri::AppHandle) -> CmdResult<()> {
+    use tauri::{Emitter, Manager};
+    let state = app.state::<AppState>();
     let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
     for s in reg.iter_mut() {
         if let Some(v) = s.vault.as_mut() {
@@ -828,7 +837,7 @@ pub fn lock_all(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<
     reg.lock_all();
     drop(reg);
     let _ = app.emit("vault-locked", serde_json::json!({ "vault_id": null }));
-    crate::nmh::invalidate_confirms(&app);
+    crate::nmh::invalidate_confirms(app);
     Ok(())
 }
 
@@ -4379,6 +4388,7 @@ pub fn set_settings(
         *guard = settings;
         (invalidate, old.nmh_chrome_ids, old.nmh_firefox_ids)
     };
+    crate::tray::sync(&app);
     if invalidate {
         crate::nmh::invalidate_confirms(&app);
     }

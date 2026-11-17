@@ -99,3 +99,5 @@ parts:
     # itself. GTK itself comes from the extension, so it is not listed here.
     stage-packages:
       - libwebkit2gtk-4.1-0
+      # Tray / close-to-tray icon (tray-icon loads it at runtime).
+      - libayatana-appindicator3-1

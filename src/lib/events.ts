@@ -9,3 +9,7 @@ export const MENU_NEW_VAULT = "menu-new-vault";
 export const MENU_OPEN_VAULT = "menu-open-vault";
 export const MENU_CLOSE_VAULT = "menu-close-vault";
 export const MENU_LOCK_ALL = "menu-lock-all";
+
+export const TRAY_CLOSE_INTRO = "tray-close-intro";
+export const TRAY_OPEN_SETTINGS = "tray-open-settings";
+export const TRAY_FOCUS_VAULT = "tray-focus-vault";

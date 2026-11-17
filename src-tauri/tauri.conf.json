@@ -46,7 +46,8 @@
         "depends": [
           "libc6 (>= 2.39)",
           "libwebkit2gtk-4.1-0",
-          "libgtk-3-0"
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
         ],
         "files": {
           "/usr/share/doc/kokos/THIRD-PARTY-NOTICES.md": "../THIRD-PARTY-NOTICES.md",
@@ -57,7 +58,8 @@
         "depends": [
           "libc.so.6(GLIBC_2.39)(64bit)",
           "webkit2gtk4.1",
-          "gtk3"
+          "gtk3",
+          "libayatana-appindicator-gtk3"
         ],
         "files": {
           "/usr/share/doc/kokos/THIRD-PARTY-NOTICES.md": "../THIRD-PARTY-NOTICES.md",

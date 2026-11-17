@@ -381,6 +381,7 @@ consumers.
 | Clipboard exposure | N/A (OS clipboard) | Medium / medium | Auto-clear after `clipboard_seconds` (default 30s, user-configurable), plus clear-on-exit; unconditional clear on read failure | Accepted residual |
 | Vault file stolen at rest | Crypto core / file format | Medium / high | File is fully AEAD-encrypted; header carries no secret material; atomic-save file permissions never widen (0600 for a new vault) | Mitigated |
 | Keychain re-prompt / ACL | macOS platform | High (dev builds) / low (annoyance, not a break) | Keychain ACL is pinned to the binary's code signature (see boundary 7); a stable code-signing identity for release builds avoids the re-prompt | Mitigated (dev-mode limitation documented, not fixed) |
+| Vaults left unlocked in a background process | N/A (app lifecycle) | Medium / medium | Closing the window to the tray locks every vault by default (`lock_on_close`); idle auto-lock and lock-on-sleep keep running while the window is hidden, and a hidden window produces no input that would reset the idle timer | Accepted residual (when the user turns `lock_on_close` off) |
 | UDS peer-auth gap | NMH | Low / low (same-user access already compromises the vault) | `getpeereid(2)` same-uid gate + rotating shared-secret token in `Hello`; both defense-in-depth over the `0600` socket — see below | Mitigated (defense-in-depth) |
 
 ## Accepted / deferred risks
@@ -447,6 +448,19 @@ consumers.
   (`commands.rs::clear_clipboard_if_unchanged`). Accepted residual — no OS
   API lets an app fully prevent another app from having already read the
   clipboard in that window.
+- **Background process after the window closes (close-to-tray):** with
+  `close_to_tray` on (the default), closing the main window hides it and the
+  process keeps running so the native-messaging host stays reachable
+  (`src-tauri/src/tray.rs`). With `lock_on_close` on (also the default) every
+  vault is locked as the window hides, so the background process holds no key
+  and the extension sees "locked", not "unlocked". A user who turns
+  `lock_on_close` off keeps vaults unlocked for longer than before: until the
+  idle auto-lock (`auto_lock_minutes`, which still runs while hidden — only
+  input in the window or an unlock resets the idle timer, extension requests
+  do not), lock-on-sleep, Lock All in
+  the tray menu, or Quit. Accepted residual of that opt-out. On Linux without a
+  tray host (or without the appindicator library) the window is never hidden:
+  closing quits as before.
 - **Frontend XSS surface:** limited — no remote content is loaded; CSP is
   `default-src 'self'; script-src 'self'; ...; img-src 'self' data:; ...;
   object-src 'none'; form-action 'none'` (`src-tauri/tauri.conf.json`).
