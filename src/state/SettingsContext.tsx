@@ -26,6 +26,9 @@ const DEFAULTS: Settings = {
   onboarding_backup_done: false,
   onboarding_import_done: false,
   onboarding_sync_deferred: false,
+  close_to_tray: true,
+  lock_on_close: true,
+  tray_intro_seen: false,
 };
 
 const Ctx = createContext<{

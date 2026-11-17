@@ -5,6 +5,7 @@ import { useSettings } from "../state/SettingsContext";
 import { useT, useLang } from "../state/LangContext";
 import { errorMessage } from "../lib/errors";
 import { IS_MAC, IS_WINDOWS } from "../lib/platform";
+import { TraySettings } from "./TraySettings";
 import {
   keychainHas,
   keychainEnable,
@@ -1438,6 +1439,8 @@ export function Settings() {
               </button>
             </div>
           </div>
+
+          <TraySettings />
 
           <div className="kv-settings-row">
             <div className="kv-settings-row-text">

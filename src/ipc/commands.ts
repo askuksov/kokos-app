@@ -233,10 +233,16 @@ export type Settings = {
   onboarding_backup_done: boolean;
   onboarding_import_done: boolean;
   onboarding_sync_deferred: boolean;
+  close_to_tray: boolean;
+  lock_on_close: boolean;
+  tray_intro_seen: boolean;
 };
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke<void>("set_settings", { settings });
 export const appVersion = () => invoke<string>("app_version");
+export const trayHideWindow = () => invoke<void>("tray_hide_window");
+export const traySupported = () => invoke<boolean>("tray_supported");
+export const appQuit = () => invoke<void>("app_quit");
 
 export const hibpSetEnabled = (enabled: boolean) => invoke<void>("hibp_set_enabled", { enabled });
 

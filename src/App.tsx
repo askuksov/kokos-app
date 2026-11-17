@@ -8,6 +8,7 @@ import { WelcomeScreen } from "./screens/Welcome";
 import { TabLock } from "./screens/TabLock";
 import { VaultScreen } from "./screens/Vault";
 import { NmhConfirm } from "./components/NmhConfirm";
+import { TrayIntro } from "./components/TrayIntro";
 import { Topbar } from "./components/Topbar";
 
 
@@ -61,6 +62,7 @@ export default function App() {
           <TabsProvider>
             <Shell />
             <NmhConfirm />
+            <TrayIntro />
           </TabsProvider>
         </ClipboardProvider>
       </LangProvider>

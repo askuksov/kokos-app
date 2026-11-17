@@ -23,7 +23,7 @@ import { useSyncStatus } from "../lib/useSyncStatus";
 import { useOnboarding } from "../lib/useOnboarding";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { VAULT_LOCKED } from "../lib/events";
+import { VAULT_LOCKED, TRAY_OPEN_SETTINGS } from "../lib/events";
 import { clearClipboard } from "../lib/clipboard";
 import { useClipboard } from "../state/ClipboardContext";
 
@@ -130,6 +130,16 @@ export function VaultScreen() {
       un.then((f) => f());
     };
   }, [refreshStatus, resetClipboard]);
+
+  useEffect(() => {
+    const un = listen(TRAY_OPEN_SETTINGS, () => {
+      setEditor(null);
+      setRoute("settings");
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [setRoute]);
 
   useEffect(() => {
     const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
