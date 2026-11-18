@@ -143,7 +143,9 @@ export function NmhConfirm() {
   }, [req?.req_id]);
 
   useEffect(() => {
-    if (req) denyRef.current?.focus({ preventScroll: true });
+    // Behind an open tray intro, Enter would deny unseen; the intro hands
+    // focus over when it closes.
+    if (req && !document.querySelector(".kv-tray-intro-scrim")) denyRef.current?.focus({ preventScroll: true });
   }, [req]);
 
   function close(allowed: boolean) {
