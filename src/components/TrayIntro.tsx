@@ -62,6 +62,10 @@ export function TrayIntro() {
 
   function dismiss() {
     setOpen(false);
+    handOffFocus();
+  }
+
+  function handOffFocus() {
     const prev = prevFocusRef.current;
     prevFocusRef.current = null;
     // An extension confirmation that arrived meanwhile waits underneath with
@@ -78,6 +82,7 @@ export function TrayIntro() {
     try {
       await trayHideWindow();
       setOpen(false);
+      handOffFocus();
       await refresh();
     } catch (e) {
       console.error("tray_hide_window failed:", e);
