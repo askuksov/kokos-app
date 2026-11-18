@@ -266,11 +266,13 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
     if outcome == Outcome::TimedOut {
         let _ = app.emit(EV_UNLOCK_CANCEL, serde_json::json!({ "req_id": slot.req_id }));
     }
-    if slot.take_rehide(outcome) && crate::tray::can_hide_to_tray(app) {
+    if st.nmh.unlock.take_rehide(&slot, outcome) && crate::tray::can_hide_to_tray(app) {
         let handle = app.clone();
+        let restored = slot.clone();
         let _ = app.run_on_main_thread(move || {
-            // A newer request may have raised its own dialog meanwhile.
-            if !handle.state::<crate::state::AppState>().nmh.unlock.has_open() {
+            // A newer dialog may have been raised meanwhile; then it decides.
+            let gate = &handle.state::<crate::state::AppState>().nmh.unlock;
+            if gate.claim_restore(&restored) {
                 crate::tray::hide_window(&handle);
             }
         });

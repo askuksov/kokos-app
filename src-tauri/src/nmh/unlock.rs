@@ -33,10 +33,15 @@ pub struct Slot {
     keep_open: AtomicBool,
     was_hidden: AtomicBool,
     restore_taken: AtomicBool,
+    /// A send-back-to-tray was decided but has not run yet (see
+    /// `UnlockGate::claim_restore`).
+    restore_pending: AtomicBool,
+    /// Which dialog this is, in the order they were raised.
+    epoch: u64,
 }
 
 impl Slot {
-    fn new(req_id: String, keep_open: bool) -> Self {
+    fn new(req_id: String, keep_open: bool, epoch: u64) -> Self {
         Self {
             req_id,
             outcome: Mutex::new(None),
@@ -44,27 +49,22 @@ impl Slot {
             keep_open: AtomicBool::new(keep_open),
             was_hidden: AtomicBool::new(false),
             restore_taken: AtomicBool::new(false),
+            restore_pending: AtomicBool::new(false),
+            epoch,
         }
     }
 
-    /// Records whether the window was hidden (in the tray) when the dialog
-    /// was raised, so it can go back there afterwards.
+    /// Records that the window was hidden (in the tray) when the dialog was
+    /// raised, so it can go back there afterwards. Only ever sets the flag:
+    /// an older request may already have handed its tray duty over.
     pub fn set_was_hidden(&self, hidden: bool) {
-        self.was_hidden.store(hidden, Ordering::SeqCst);
+        if hidden {
+            self.was_hidden.store(true, Ordering::SeqCst);
+        }
     }
 
-    /// True for exactly one caller, and only when the window should go back
-    /// to the tray: it was hidden before, and no joined request asked to keep
-    /// it open after a successful unlock (a save still needs its confirm).
-    pub fn take_rehide(&self, outcome: Outcome) -> bool {
-        if self.restore_taken.swap(true, Ordering::SeqCst) {
-            return false;
-        }
-        should_rehide(
-            self.was_hidden.load(Ordering::SeqCst),
-            self.keep_open.load(Ordering::SeqCst),
-            outcome,
-        )
+    fn outcome(&self) -> Option<Outcome> {
+        self.outcome.lock().ok().and_then(|g| *g)
     }
 
     /// Whether the dialog is still waiting for an answer.
@@ -103,6 +103,9 @@ pub enum Join {
 struct Inner {
     current: Option<Arc<Slot>>,
     cooldown_until: Option<Instant>,
+    /// The most recently raised dialog, open or not.
+    latest: Option<Arc<Slot>>,
+    epoch: u64,
 }
 
 #[derive(Default)]
@@ -124,8 +127,14 @@ impl UnlockGate {
         if g.cooldown_until.is_some_and(|t| now < t) {
             return Join::CoolingDown;
         }
-        let slot = Arc::new(Slot::new(uuid::Uuid::new_v4().to_string(), keep_open));
+        g.epoch += 1;
+        let slot = Arc::new(Slot::new(
+            uuid::Uuid::new_v4().to_string(),
+            keep_open,
+            g.epoch,
+        ));
         g.current = Some(slot.clone());
+        g.latest = Some(slot.clone());
         Join::New(slot)
     }
 
@@ -152,13 +161,57 @@ impl UnlockGate {
         recorded
     }
 
-    /// Whether some dialog is open right now. A request that finished must
-    /// not send the window back to the tray over a newer dialog.
-    pub fn has_open(&self) -> bool {
-        self.inner
-            .lock()
-            .map(|g| g.current.is_some())
-            .unwrap_or(false)
+    /// True for exactly one waiter of `slot`, when the window should go back
+    /// to the tray: it was hidden before, and no joined request asked to keep
+    /// it open after a successful unlock (a save still needs its confirm).
+    /// The caller then queues the hide and runs `claim_restore` right before
+    /// it. Decided under the gate lock so a newer dialog's hand-over in
+    /// `claim_restore` cannot slip between reading and deciding.
+    pub fn take_rehide(&self, slot: &Slot, outcome: Outcome) -> bool {
+        let Ok(_g) = self.inner.lock() else {
+            return false;
+        };
+        if slot.restore_taken.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        let rehide = should_rehide(
+            slot.was_hidden.load(Ordering::SeqCst),
+            slot.keep_open.load(Ordering::SeqCst),
+            outcome,
+        );
+        if rehide {
+            slot.restore_pending.store(true, Ordering::SeqCst);
+        }
+        rehide
+    }
+
+    /// Run right before a queued send-back-to-tray: whether to hide now.
+    /// When a newer dialog was raised meanwhile, the duty passes to it: a
+    /// dialog still open (or not yet decided) inherits "was hidden" and
+    /// restores the window itself; one already finished decides by its own
+    /// rule. Hiding is never done over an open dialog.
+    pub fn claim_restore(&self, slot: &Slot) -> bool {
+        let Ok(g) = self.inner.lock() else {
+            return false;
+        };
+        if !slot.restore_pending.swap(false, Ordering::SeqCst) {
+            return false;
+        }
+        match g.latest.as_ref() {
+            Some(l) if l.epoch != slot.epoch => {
+                if g.current.is_some() || !l.restore_taken.load(Ordering::SeqCst) {
+                    l.was_hidden.store(true, Ordering::SeqCst);
+                    false
+                } else {
+                    should_rehide(
+                        true,
+                        l.keep_open.load(Ordering::SeqCst),
+                        l.outcome().unwrap_or(Outcome::TimedOut),
+                    )
+                }
+            }
+            _ => g.current.is_none(),
+        }
     }
 
     /// Cancels whatever dialog is open (the window went to the tray, the
@@ -309,11 +362,14 @@ mod tests {
         let g = UnlockGate::default();
         let s = slot_of(g.join(false, Instant::now()));
         s.set_was_hidden(true);
-        assert!(s.take_rehide(Outcome::Unlocked));
+        g.resolve(&s.req_id, Outcome::Unlocked, Instant::now());
+        assert!(g.take_rehide(&s, Outcome::Unlocked));
         assert!(
-            !s.take_rehide(Outcome::Unlocked),
+            !g.take_rehide(&s, Outcome::Unlocked),
             "only one waiter restores the window"
         );
+        assert!(g.claim_restore(&s));
+        assert!(!g.claim_restore(&s), "the hide runs once");
     }
 
     #[test]
@@ -322,10 +378,8 @@ mod tests {
         let now = Instant::now();
         let s = slot_of(g.join(false, now));
         assert!(s.is_open());
-        assert!(g.has_open());
         assert!(g.resolve(&s.req_id, Outcome::Cancelled, now));
         assert!(!s.is_open());
-        assert!(!g.has_open());
         assert_eq!(g.wait(&s, now), Outcome::Cancelled, "not TimedOut");
     }
 
@@ -351,6 +405,52 @@ mod tests {
         let s = slot_of(g.join(false, now));
         s.set_was_hidden(true);
         let _ = g.join(true, now);
-        assert!(!s.take_rehide(Outcome::Unlocked));
+        assert!(!g.take_rehide(&s, Outcome::Unlocked));
+    }
+
+    #[test]
+    fn an_older_restore_never_hides_a_newer_open_dialog_and_hands_over() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let a = slot_of(g.join(false, now));
+        a.set_was_hidden(true);
+        g.resolve(&a.req_id, Outcome::TimedOut, now);
+        assert!(g.take_rehide(&a, Outcome::TimedOut));
+        // B opens over the window A brought forward, so B saw it visible.
+        let b = slot_of(g.join(false, now));
+        b.set_was_hidden(false);
+        assert!(!g.claim_restore(&a), "B's dialog stays up");
+        g.resolve(&b.req_id, Outcome::Cancelled, now);
+        assert!(
+            g.take_rehide(&b, Outcome::Cancelled),
+            "B took over the tray duty"
+        );
+        assert!(g.claim_restore(&b));
+    }
+
+    #[test]
+    fn an_older_restore_respects_a_newer_finished_keep_open_unlock() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let a = slot_of(g.join(false, now));
+        a.set_was_hidden(true);
+        g.resolve(&a.req_id, Outcome::TimedOut, now);
+        assert!(g.take_rehide(&a, Outcome::TimedOut));
+        let b = slot_of(g.join(true, now));
+        g.resolve(&b.req_id, Outcome::Unlocked, now);
+        assert!(!g.take_rehide(&b, Outcome::Unlocked));
+        assert!(!g.claim_restore(&a), "B's save confirm needs the window");
+
+        let c = slot_of(g.join(false, now));
+        g.resolve(&c.req_id, Outcome::Unlocked, now);
+        assert!(
+            !g.take_rehide(&c, Outcome::Unlocked),
+            "C saw the window visible"
+        );
+        let d = slot_of(g.join(false, now));
+        d.set_was_hidden(true);
+        g.resolve(&d.req_id, Outcome::Unlocked, now);
+        assert!(g.take_rehide(&d, Outcome::Unlocked));
+        assert!(g.claim_restore(&d));
     }
 }
