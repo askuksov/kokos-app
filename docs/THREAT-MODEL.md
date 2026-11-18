@@ -165,6 +165,16 @@ and the access-control primitives it can use differ.
   is unlocked); the pick is accepted only when it names a vault the dialog
   offered as unlocked (`handlers::save_target`). Vault names and paths never
   reach the extension.
+- Unlock requests: when every open vault is locked, `request_unlock`
+  (`handlers::request_unlock`) brings the window forward with an unlock
+  dialog. The master password, Touch ID and the saved password are used in
+  the app only; the extension gets back no more than "a vault is readable now"
+  (re-checked server-side, the WebView's answer is not trusted). One dialog
+  at a time (`nmh/unlock.rs`): a second request joins the open one, and after
+  a Cancel new requests are refused for 30 s, so a site cannot keep pulling
+  the window to the front. The extension sends it only on a user action (the
+  key icon, the popup, the fill shortcut) on a site Kokos is enabled on, and
+  its generic request bridge refuses the action.
 - The socket directory is created `0700` and the socket file `0600`
   (`src-tauri/src/nmh/mod.rs`). Two defense-in-depth peer checks sit on top of
   those permissions: a `getpeereid(2)` same-uid gate at accept, and
@@ -382,6 +392,7 @@ consumers.
 | Vault file stolen at rest | Crypto core / file format | Medium / high | File is fully AEAD-encrypted; header carries no secret material; atomic-save file permissions never widen (0600 for a new vault) | Mitigated |
 | Keychain re-prompt / ACL | macOS platform | High (dev builds) / low (annoyance, not a break) | Keychain ACL is pinned to the binary's code signature (see boundary 7); a stable code-signing identity for release builds avoids the re-prompt | Mitigated (dev-mode limitation documented, not fixed) |
 | Vaults left unlocked in a background process | N/A (app lifecycle) | Medium / medium | Closing the window to the tray locks every vault by default (`lock_on_close`); idle auto-lock and lock-on-sleep keep running while the window is hidden, and a hidden window produces no input that would reset the idle timer | Accepted residual (when the user turns `lock_on_close` off) |
+| Extension raising the unlock dialog over and over (focus stealing / password-prompt fatigue) | NMH | Low / low (annoyance; the password is never typed outside the app) | User-action-only and enabled-site-only on the extension side; one dialog at a time and a 30 s refusal after Cancel in the app (`nmh/unlock.rs`) | Mitigated |
 | UDS peer-auth gap | NMH | Low / low (same-user access already compromises the vault) | `getpeereid(2)` same-uid gate + rotating shared-secret token in `Hello`; both defense-in-depth over the `0600` socket — see below | Mitigated (defense-in-depth) |
 
 ## Accepted / deferred risks

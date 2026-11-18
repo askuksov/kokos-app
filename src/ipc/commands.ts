@@ -285,6 +285,9 @@ export const nmhConfirmReply = (
   vaultId: string | null = null,
 ) => invoke<void>("nmh_confirm_reply", { reqId, allowed, remember, vaultId });
 
+export const nmhUnlockReply = (reqId: string, unlocked: boolean) =>
+  invoke<void>("nmh_unlock_reply", { reqId, unlocked });
+
 export type NmhStatus = {
   enabled: boolean;
   running: boolean;

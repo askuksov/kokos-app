@@ -4450,6 +4450,17 @@ pub fn nmh_confirm_reply(
     Ok(())
 }
 
+/// The extension unlock dialog's answer: `unlocked` after a vault was
+/// unlocked in it, `false` on Cancel. Not trusted as is: `request_unlock`
+/// re-checks that a vault is readable before telling the extension so.
+#[tauri::command]
+pub fn nmh_unlock_reply(state: State<'_, AppState>, req_id: String, unlocked: bool) -> CmdResult<()> {
+    use crate::nmh::unlock::Outcome;
+    let outcome = if unlocked { Outcome::Unlocked } else { Outcome::Cancelled };
+    state.nmh.unlock.resolve(&req_id, outcome, std::time::Instant::now());
+    Ok(())
+}
+
 
 /// Root `manifest::*` resolves its per-browser directory against: `$HOME` on
 /// unix, %APPDATA% on Windows (see that arm below). `None` means "this platform
@@ -4710,6 +4721,7 @@ pub fn nmh_set_enabled(
     } else {
         crate::nmh::stop(&app);
         crate::nmh::invalidate_confirms(&app);
+        crate::nmh::cancel_unlock_request(&app);
     }
     Ok(())
 }

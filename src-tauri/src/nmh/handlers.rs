@@ -125,6 +125,149 @@ pub fn status(app: &tauri::AppHandle, req: &Request) -> Response {
     }
 }
 
+/// Asks the WebView to show the extension unlock dialog.
+pub const EV_UNLOCK_REQUEST: &str = "nmh-unlock-request";
+/// Closes that dialog (timed out, or cancelled by the backend).
+pub const EV_UNLOCK_CANCEL: &str = "nmh-unlock-cancel";
+
+/// Every open vault in `vault_order` plus the tabs restored locked at launch,
+/// each marked locked or not. `None` when the session registry is poisoned.
+fn open_vault_choices(app: &tauri::AppHandle) -> Option<Vec<VaultChoice>> {
+    let st = app.state::<crate::state::AppState>();
+    let choices = {
+        let mut reg = st.sessions.lock().ok()?;
+        save_choices(&vault_states(&mut reg))
+    };
+    let restored = st.restored_locked.lock().map(|g| g.clone()).unwrap_or_default();
+    Some(with_restored_locked(choices, &restored))
+}
+
+/// What `request_unlock` does before any dialog, from the open vault list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnlockPrecheck {
+    /// A vault is readable (or only busy): nothing to unlock.
+    Readable,
+    /// No vault is open at all: nothing to unlock either.
+    NoVault,
+    /// Every open vault is locked: show the dialog.
+    NeedsUnlock,
+}
+
+fn unlock_precheck(choices: &[VaultChoice]) -> UnlockPrecheck {
+    if choices.is_empty() {
+        UnlockPrecheck::NoVault
+    } else if choices.iter().any(|c| !c.locked) {
+        UnlockPrecheck::Readable
+    } else {
+        UnlockPrecheck::NeedsUnlock
+    }
+}
+
+/// `request_unlock { url, keep_open? }`: the extension hit a locked app on a
+/// user action (key icon, Fill, shortcut, "Unlock and save") and asks the app
+/// to show its unlock dialog. The password is typed in the app only; the
+/// answer says no more than whether a vault is readable now.
+///
+/// Already readable → `ok` at once, no window. No vault open → `no_vault`.
+/// Otherwise the window comes forward with a vault picker over the locked
+/// vaults, and the call parks until the human unlocks (`ok`), cancels
+/// (`denied`, and further requests are refused for a while) or the wait runs
+/// out (`timeout`). A request arriving while the dialog is open joins it. A
+/// window that was in the tray goes back there afterwards, unless the caller
+/// set `keep_open` (a save: its confirm prompt comes next).
+pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
+    use super::unlock::{Join, Outcome, UNLOCK_TIMEOUT};
+    use tauri::Emitter;
+
+    let url = match url_arg(&req.payload) {
+        Ok(u) => u,
+        Err(e) => return Response::err(&req.id, e.code, &e.message),
+    };
+    let keep_open = req
+        .payload
+        .get("keep_open")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let unlocked = || Response::ok(&req.id, serde_json::json!({ "unlocked": true }));
+
+    let Some(choices) = open_vault_choices(app) else {
+        return Response::err(&req.id, codes::INTERNAL, "vault session is unavailable");
+    };
+    match unlock_precheck(&choices) {
+        UnlockPrecheck::NoVault => {
+            return Response::err(&req.id, codes::NO_VAULT, "no vault is open")
+        }
+        UnlockPrecheck::Readable => return unlocked(),
+        UnlockPrecheck::NeedsUnlock => {}
+    }
+
+    let st = app.state::<crate::state::AppState>();
+    let slot = match st.nmh.unlock.join(keep_open, std::time::Instant::now()) {
+        Join::CoolingDown => {
+            return Response::err(&req.id, codes::DENIED, "unlock was cancelled recently")
+        }
+        Join::Joined(slot) => slot,
+        Join::New(slot) => {
+            if app.get_webview_window("main").is_none() {
+                st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+                return Response::err(&req.id, codes::INTERNAL, "no window to unlock in");
+            }
+            slot.set_was_hidden(crate::tray::is_main_hidden(app));
+            let locked: Vec<&str> = choices.iter().map(|c| c.id.as_str()).collect();
+            let expires_at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+                + UNLOCK_TIMEOUT.as_millis() as u64;
+            let emitted = app.emit(
+                EV_UNLOCK_REQUEST,
+                serde_json::json!({
+                    "req_id": slot.req_id,
+                    "domain": domain_for(Some(&url), None),
+                    "vault_choices": locked,
+                    "default_vault": locked.first(),
+                    "expires_at_ms": expires_at_ms,
+                }),
+            );
+            if emitted.is_err() {
+                st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+                return Response::err(&req.id, codes::INTERNAL, "could not show the unlock dialog");
+            }
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                crate::tray::show_main(&handle);
+                if let Some(w) = handle.get_webview_window("main") {
+                    let _ = w
+                        .request_user_attention(Some(tauri::UserAttentionType::Informational));
+                }
+            });
+            slot
+        }
+    };
+
+    let outcome = st
+        .nmh
+        .unlock
+        .wait(&slot, std::time::Instant::now() + UNLOCK_TIMEOUT);
+    if outcome == Outcome::TimedOut {
+        let _ = app.emit(EV_UNLOCK_CANCEL, serde_json::json!({ "req_id": slot.req_id }));
+    }
+    if slot.take_rehide(outcome) && crate::tray::can_hide_to_tray(app) {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || crate::tray::hide_window(&handle));
+    }
+
+    match outcome {
+        // The WebView is not the authority: check that a vault really opened.
+        Outcome::Unlocked => match open_vault_choices(app).map(|c| unlock_precheck(&c)) {
+            Some(UnlockPrecheck::Readable) => unlocked(),
+            _ => Response::err(&req.id, codes::LOCKED, "vault is locked"),
+        },
+        Outcome::Cancelled => Response::err(&req.id, codes::DENIED, "unlock was cancelled"),
+        Outcome::TimedOut => Response::err(&req.id, codes::TIMEOUT, "nobody unlocked in time"),
+    }
+}
+
 /// Reads and validates the payload's `url` field, shared by `get_logins`
 /// and the optional `url` on `get_secret`/`get_totp`/`update_login`. A missing or non-string `url` is a
 /// caller bug (`bad_request`); a present-but-unreadable one (`about:blank`,
@@ -2428,6 +2571,20 @@ mod tests {
             cross_vault_block(&[Open, Busy]),
             Some(codes::LOCKED),
             "skipping a busy vault would hide its logins and invite a duplicate save"
+        );
+    }
+
+    #[test]
+    fn unlock_precheck_shows_the_dialog_only_when_every_open_vault_is_locked() {
+        assert_eq!(unlock_precheck(&[]), UnlockPrecheck::NoVault);
+        assert_eq!(
+            unlock_precheck(&[choice("/a", true), choice("/b", false)]),
+            UnlockPrecheck::Readable,
+            "one readable vault is enough"
+        );
+        assert_eq!(
+            unlock_precheck(&[choice("/a", true), choice("/b", true)]),
+            UnlockPrecheck::NeedsUnlock
         );
     }
 

@@ -26,7 +26,7 @@ type VaultChoice = { id: string; locked: boolean };
 
 // Vault names for the picker. Vaults that share a file name get as many of
 // their parent folders as it takes to tell them apart, else the full path.
-function vaultLabels(choices: VaultChoice[]): Map<string, string> {
+export function vaultLabels(choices: VaultChoice[]): Map<string, string> {
   const folders = choices.map((c) => c.id.split(/[\\/]/).filter(Boolean).slice(0, -1));
   const labelAt = (i: number, depth: number) => {
     const name = vaultDisplayName(choices[i].id);

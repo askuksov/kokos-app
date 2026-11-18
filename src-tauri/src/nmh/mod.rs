@@ -50,6 +50,7 @@ pub mod handlers;
 pub mod grants;
 pub mod manifest;
 pub mod snap;
+pub mod unlock;
 
 /// Native-messaging listener state, held on `AppState.nmh`.
 #[derive(Default)]
@@ -90,6 +91,9 @@ pub struct NmhState {
     /// Live "once per site per session" grants (`nmh_confirm_mode =
     /// session_domain`).
     pub grants: grants::Grants,
+    /// The open extension unlock request (`request_unlock`), if any;
+    /// `nmh_unlock_reply` answers it.
+    pub unlock: unlock::UnlockGate,
     /// Current handshake token (Layer B), minted on each `start()`
     /// and mirrored to the `nmh.token` file the host reads — `0600` on unix,
     /// and on Windows protected only by the profile ACL it inherits (a real
@@ -778,6 +782,16 @@ pub fn invalidate_confirms(app: &tauri::AppHandle) {
     let _ = app.emit("nmh-confirm-cancel", serde_json::json!({ "req_id": null }));
 }
 
+/// Closes an open extension unlock dialog as cancelled (the window went to
+/// the tray, or the integration was turned off). No-op when none is open.
+pub fn cancel_unlock_request(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let st = app.state::<crate::state::AppState>();
+    if let Some(id) = st.nmh.unlock.cancel_current(std::time::Instant::now()) {
+        let _ = app.emit(handlers::EV_UNLOCK_CANCEL, serde_json::json!({ "req_id": id }));
+    }
+}
+
 /// The whitelist entries REMOVED between `old` and `new` (present in `old`,
 /// absent from `new`), each reduced to the exact origin string a live
 /// connection's persistent grant would have been stored under. Chrome
@@ -877,6 +891,7 @@ pub fn dispatch(
         "save_login" => handlers::save_login(app, &req, &caller.origin),
         "update_login" => handlers::update_login(app, &req, scope, &caller.origin),
         "generate_password" => handlers::generate_password(&req),
+        "request_unlock" => handlers::request_unlock(app, &req),
         _ => Response::err(
             &req.id,
             codes::UNKNOWN_ACTION,
