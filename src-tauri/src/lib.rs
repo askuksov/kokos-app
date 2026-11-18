@@ -41,8 +41,13 @@ pub fn run() {
         if let Some(arg) = args.get(1) {
             // A relative path is relative to the second launch's directory,
             // not this process's; `join` leaves an absolute one unchanged.
-            let p = std::path::Path::new(&cwd).join(arg);
-            if p.is_file() {
+            // A Windows drive-relative path (`C:file.kokos`) depends on that
+            // process's per-drive directory, which is not forwarded: ignore it.
+            let raw = std::path::Path::new(arg);
+            let drive_relative = !raw.is_absolute()
+                && matches!(raw.components().next(), Some(std::path::Component::Prefix(_)));
+            let p = std::path::Path::new(&cwd).join(raw);
+            if !drive_relative && p.is_file() {
                 *app.state::<state::AppState>().pending_open.lock().unwrap() = Some(p.clone());
                 let _ = app.emit("open-file-request", p.to_string_lossy().into_owned());
             }

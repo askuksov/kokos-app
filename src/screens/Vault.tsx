@@ -133,19 +133,19 @@ export function VaultScreen() {
   }, [refreshStatus, resetClipboard]);
 
   // Tray "Settings…". A running text-import review is minimized, not
-  // closed, so Settings is what shows and the import stays resumable.
+  // closed, so Settings is what shows and the import stays resumable. The
+  // entry editor is left as the other Settings entry points leave it.
   const openSettingsFromTray = useCallback(() => {
     if (source && !minimized) minimize();
-    setEditor(null);
     setRoute("settings");
   }, [source, minimized, minimize, setRoute]);
   useEffect(() => {
-    if (takeTraySettingsRequest()) openSettingsFromTray();
+    if (vaultId && takeTraySettingsRequest(vaultId)) openSettingsFromTray();
     const un = listen(TRAY_OPEN_SETTINGS, openSettingsFromTray);
     return () => {
       un.then((f) => f());
     };
-  }, [openSettingsFromTray]);
+  }, [vaultId, openSettingsFromTray]);
 
   useEffect(() => {
     const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {

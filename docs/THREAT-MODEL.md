@@ -455,8 +455,11 @@ consumers.
   vault is locked right after the window hides: the lock runs on a background
   thread (it saves each vault) and normally completes within a fraction of a
   second. An extension request that already holds a grant and arrives in that
-  interval can still be answered; after it, the background process holds no
-  key and the extension sees "locked", not "unlocked". A user who turns
+  interval can still be answered; after it the extension sees "locked", not
+  "unlocked". One more nuance: a vault that is out on loan to a running
+  operation (a save, an import) when the lock runs is marked locked at once,
+  but its key is dropped only when that operation returns it, so the key can
+  stay in memory for the rest of that operation. A user who turns
   `lock_on_close` off keeps vaults unlocked for longer than before: until the
   idle auto-lock (`auto_lock_minutes`, which still runs while hidden — only
   input in the window or an unlock resets the idle timer, extension requests

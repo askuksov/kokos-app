@@ -19,6 +19,8 @@ export function TrayIntro() {
   const hideRef = useRef<HTMLButtonElement>(null);
   const quitRef = useRef<HTMLButtonElement>(null);
   const prevFocusRef = useRef<HTMLElement | null>(null);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
 
   useEffect(() => {
     const un = listen(TRAY_CLOSE_INTRO, () => {
@@ -41,7 +43,9 @@ export function TrayIntro() {
     function onDocKeyDown(ev: KeyboardEvent) {
       if (ev.key === "Escape") {
         ev.stopPropagation();
-        dismiss();
+        // A hide already on its way would finish anyway; do not pretend the
+        // window is staying.
+        if (!busyRef.current) dismiss();
         return;
       }
       if (ev.key !== "Tab") return;
