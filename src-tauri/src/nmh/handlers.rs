@@ -208,6 +208,14 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
         }
         Join::Joined(slot) => slot,
         Join::New(slot) => {
+            // The integration may have been turned off after this request
+            // passed the connection's checks; `enabled` is written before
+            // `cancel_unlock_request` runs, so one of the two catches it.
+            let enabled = st.nmh.enabled.lock().map(|e| *e).unwrap_or(false);
+            if !enabled {
+                st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+                return Response::err(&req.id, codes::DENIED, "browser integration is off");
+            }
             if app.get_webview_window("main").is_none() {
                 st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
                 return Response::err(&req.id, codes::INTERNAL, "no window to unlock in");
@@ -234,7 +242,13 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
                 return Response::err(&req.id, codes::INTERNAL, "could not show the unlock dialog");
             }
             let handle = app.clone();
+            let shown = slot.clone();
             let _ = app.run_on_main_thread(move || {
+                // Closed (window hidden, timed out) before this ran: do not
+                // bring the window back.
+                if !shown.is_open() {
+                    return;
+                }
                 crate::tray::show_main(&handle);
                 if let Some(w) = handle.get_webview_window("main") {
                     let _ = w
@@ -254,7 +268,12 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
     }
     if slot.take_rehide(outcome) && crate::tray::can_hide_to_tray(app) {
         let handle = app.clone();
-        let _ = app.run_on_main_thread(move || crate::tray::hide_window(&handle));
+        let _ = app.run_on_main_thread(move || {
+            // A newer request may have raised its own dialog meanwhile.
+            if !handle.state::<crate::state::AppState>().nmh.unlock.has_open() {
+                crate::tray::hide_window(&handle);
+            }
+        });
     }
 
     match outcome {

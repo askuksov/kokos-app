@@ -34,6 +34,8 @@ export function NmhUnlock() {
   const [secondsLeft, setSecondsLeft] = useState(DEFAULT_TIMEOUT_SECS);
   const [total, setTotal] = useState(DEFAULT_TIMEOUT_SECS);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  // What had focus before the dialog opened, to give it back on close.
+  const returnFocusRef = useRef<Element | null>(null);
   const activeRef = useRef(activeTab);
   activeRef.current = activeTab;
 
@@ -51,6 +53,7 @@ export function NmhUnlock() {
         const incoming = ev.payload;
         const current = reqRef.current;
         if (current && current.req_id !== incoming.req_id) void nmhUnlockReply(current.req_id, false);
+        if (!current) returnFocusRef.current = document.activeElement;
         reqRef.current = incoming;
         setReq(incoming);
         // Preselect the active tab when it is one of the locked vaults.
@@ -101,7 +104,13 @@ export function NmhUnlock() {
       const stops = Array.from(
         root.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled])"),
       );
-      if (stops.length < 2) return;
+      if (stops.length === 0) return;
+      if (stops.length === 1) {
+        // Only Cancel is enabled (an unlock is running): Tab stays on it.
+        ev.preventDefault();
+        stops[0].focus({ preventScroll: true });
+        return;
+      }
       const first = stops[0];
       const last = stops[stops.length - 1];
       const idx = stops.findIndex((el) => el === document.activeElement);
@@ -112,6 +121,15 @@ export function NmhUnlock() {
     }
     document.addEventListener("keydown", onDocKeyDown, true);
     return () => document.removeEventListener("keydown", onDocKeyDown, true);
+  }, [req]);
+
+  // Closed while the window stays up: hand focus back to where it was, if
+  // that element is still there (an unlock usually replaces the screen).
+  useEffect(() => {
+    if (req) return;
+    const back = returnFocusRef.current;
+    returnFocusRef.current = null;
+    if (back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true });
   }, [req]);
 
   if (!req || !vault) return null;
