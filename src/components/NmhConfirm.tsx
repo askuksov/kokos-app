@@ -158,6 +158,9 @@ export function NmhConfirm() {
   useEffect(() => {
     if (!req) return;
     function onDocKeyDown(ev: KeyboardEvent) {
+      // The tray intro renders above this dialog and owns the keyboard while
+      // it is open; both listen on document, so yield to it here.
+      if (document.querySelector(".kv-tray-intro-scrim")) return;
       if (ev.key === "Escape") {
         ev.stopPropagation();
         close(false);

@@ -254,15 +254,25 @@ fn appindicator_loadable() -> bool {
 
 #[cfg(target_os = "linux")]
 fn status_notifier_watcher_present() -> bool {
+    use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
     use std::time::Duration;
+    const WATCHER: &str = "org.kde.StatusNotifierWatcher";
     let Ok(conn) = dbus::blocking::Connection::new_session() else {
         return false;
     };
-    let proxy = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", Duration::from_millis(500));
-    let (has,): (bool,) = proxy
-        .method_call("org.freedesktop.DBus", "NameHasOwner", ("org.kde.StatusNotifierWatcher",))
+    let timeout = Duration::from_millis(500);
+    let bus = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", timeout);
+    let (owned,): (bool,) = bus
+        .method_call("org.freedesktop.DBus", "NameHasOwner", (WATCHER,))
         .unwrap_or((false,));
-    has
+    if !owned {
+        return false;
+    }
+    // The watcher can outlive the panel that draws the icons; only a
+    // registered host actually shows one.
+    conn.with_proxy(WATCHER, "/StatusNotifierWatcher", timeout)
+        .get::<bool>(WATCHER, "IsStatusNotifierHostRegistered")
+        .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -468,6 +478,12 @@ pub fn tray_hide_window(app: AppHandle, state: tauri::State<'_, AppState>) -> Re
             s.tray_intro_seen = true;
             crate::settings::save(&dir, &s).map_err(|e| e.to_string())?;
         }
+    }
+    // The tray host may have gone away while the dialog was open; hiding
+    // then would strand the user, so finish the close as a quit instead.
+    if !is_active(&app) || !available_now() {
+        app.exit(0);
+        return Ok(());
     }
     hide_main(&app);
     Ok(())

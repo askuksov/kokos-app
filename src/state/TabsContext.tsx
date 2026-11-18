@@ -235,7 +235,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       if (usable(active) && !addingRef.current) return;
       const idx = usable(active) ? activeIndexRef.current : list.findIndex(usable);
       if (idx < 0) return;
-      requestTraySettings();
+      requestTraySettings(list[idx].vaultId);
       activate(idx);
     });
     return () => {
