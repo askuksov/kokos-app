@@ -67,6 +67,11 @@ impl Slot {
         )
     }
 
+    /// Whether the dialog is still waiting for an answer.
+    pub fn is_open(&self) -> bool {
+        self.outcome.lock().map(|g| g.is_none()).unwrap_or(false)
+    }
+
     fn set(&self, outcome: Outcome) -> bool {
         let Ok(mut g) = self.outcome.lock() else {
             return false;
@@ -126,21 +131,34 @@ impl UnlockGate {
 
     /// Answers the open dialog. An unknown or stale id is a no-op. A cancel
     /// starts the cooldown. Returns whether the id was the open dialog.
+    ///
+    /// The outcome is recorded before the slot leaves the gate, both under
+    /// the gate lock: a waiter that finds no open slot always finds the
+    /// outcome, so every joined request gets the same answer. Lock order is
+    /// gate, then slot; `wait` never holds the slot lock while taking the
+    /// gate lock.
     pub fn resolve(&self, req_id: &str, outcome: Outcome, now: Instant) -> bool {
-        let slot = {
-            let Ok(mut g) = self.inner.lock() else {
-                return false;
-            };
-            match g.current.as_ref() {
-                Some(s) if s.req_id == req_id => {}
-                _ => return false,
-            }
-            if outcome == Outcome::Cancelled {
-                g.cooldown_until = Some(now + CANCEL_COOLDOWN);
-            }
-            g.current.take()
+        let Ok(mut g) = self.inner.lock() else {
+            return false;
         };
-        slot.is_some_and(|s| s.set(outcome))
+        let Some(slot) = g.current.as_ref().filter(|s| s.req_id == req_id).cloned() else {
+            return false;
+        };
+        if outcome == Outcome::Cancelled {
+            g.cooldown_until = Some(now + CANCEL_COOLDOWN);
+        }
+        let recorded = slot.set(outcome);
+        g.current = None;
+        recorded
+    }
+
+    /// Whether some dialog is open right now. A request that finished must
+    /// not send the window back to the tray over a newer dialog.
+    pub fn has_open(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|g| g.current.is_some())
+            .unwrap_or(false)
     }
 
     /// Cancels whatever dialog is open (the window went to the tray, the
@@ -296,6 +314,19 @@ mod tests {
             !s.take_rehide(Outcome::Unlocked),
             "only one waiter restores the window"
         );
+    }
+
+    #[test]
+    fn a_waiter_past_its_deadline_gets_the_outcome_already_recorded() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let s = slot_of(g.join(false, now));
+        assert!(s.is_open());
+        assert!(g.has_open());
+        assert!(g.resolve(&s.req_id, Outcome::Cancelled, now));
+        assert!(!s.is_open());
+        assert!(!g.has_open());
+        assert_eq!(g.wait(&s, now), Outcome::Cancelled, "not TimedOut");
     }
 
     #[test]
