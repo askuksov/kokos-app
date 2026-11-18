@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { listen } from "@tauri-apps/api/event";
 import { switchVault, lockVault, lockAll, closeVault, getSettings, recentFiles, reorderVaults } from "../ipc/commands";
 import { VAULT_LOCKED, VAULT_UNLOCKED, MENU_NEW_VAULT, MENU_OPEN_VAULT, MENU_CLOSE_VAULT, MENU_LOCK_ALL, TRAY_FOCUS_VAULT, TRAY_OPEN_SETTINGS } from "../lib/events";
-import { requestTraySettings } from "../lib/traySettings";
+import { requestTraySettings, clearTraySettingsRequest } from "../lib/traySettings";
 import { vaultDisplayName } from "../lib/format";
 
 export type Tab = { vaultId: string; name: string; locked: boolean; registered: boolean };
@@ -108,6 +108,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const activate = useCallback((index: number) => {
+    clearTraySettingsRequest();
     setAdding(false);
     const tab = tabsRef.current[index];
     if (!tab) return;
@@ -235,8 +236,10 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       if (usable(active) && !addingRef.current) return;
       const idx = usable(active) ? activeIndexRef.current : list.findIndex(usable);
       if (idx < 0) return;
-      requestTraySettings(list[idx].vaultId);
+      // activate() clears any older request, so file this one after it; the
+      // vault screen mounts only after this handler returns.
       activate(idx);
+      requestTraySettings(list[idx].vaultId);
     });
     return () => {
       un.then((f) => f());
