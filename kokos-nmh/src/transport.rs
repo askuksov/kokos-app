@@ -137,11 +137,13 @@ pub fn read_token() -> String {
 }
 
 /// How long the host waits for the app's answer. The four confirm-bearing
-/// actions wait on a human, so they get 90 s — but never forever: a wedged
-/// app must not hang the browser's port.
+/// actions and `request_unlock` wait on a human, so they get 90 s — but never
+/// forever: a wedged app must not hang the browser's port.
 pub fn timeout_for(action: &str) -> Duration {
     match action {
-        "get_secret" | "get_totp" | "save_login" | "update_login" => Duration::from_secs(90),
+        "get_secret" | "get_totp" | "save_login" | "update_login" | "request_unlock" => {
+            Duration::from_secs(90)
+        }
         _ => Duration::from_secs(5),
     }
 }
@@ -279,7 +281,7 @@ mod tests {
     #[test]
     fn confirm_actions_get_the_long_timeout() {
         assert_eq!(timeout_for("get_logins"), std::time::Duration::from_secs(5));
-        for a in ["get_secret", "get_totp", "save_login", "update_login"] {
+        for a in ["get_secret", "get_totp", "save_login", "update_login", "request_unlock"] {
             assert_eq!(
                 timeout_for(a),
                 std::time::Duration::from_secs(90),

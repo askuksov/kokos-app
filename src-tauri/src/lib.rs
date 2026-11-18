@@ -139,6 +139,7 @@ pub fn run() {
             commands::set_settings,
             commands::note_activity,
             commands::nmh_confirm_reply,
+            commands::nmh_unlock_reply,
             commands::nmh_status,
             commands::nmh_set_enabled,
             commands::hibp_set_enabled,

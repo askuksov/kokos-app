@@ -434,14 +434,38 @@ pub fn hide_main(app: &AppHandle) {
         .lock()
         .map(|s| s.lock_on_close)
         .unwrap_or(true);
+    // Closing the window answers an open extension unlock request with no.
+    crate::nmh::cancel_unlock_request(app);
+    hide_window(app);
+    if lock {
+        lock_all_in_background(app);
+    }
+}
+
+/// Hide the main window (Dock icon off on macOS) without touching the vaults.
+/// Used on its own to send the window back to the tray after an extension
+/// unlock request.
+pub fn hide_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
         let _ = w.hide();
     }
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-    if lock {
-        lock_all_in_background(app);
-    }
+}
+
+/// Whether the main window is hidden right now (in the tray). A missing
+/// window or a failed query counts as visible, so nothing gets re-hidden by
+/// mistake.
+pub fn is_main_hidden(app: &AppHandle) -> bool {
+    app.get_webview_window(MAIN_WINDOW)
+        .and_then(|w| w.is_visible().ok())
+        .is_some_and(|visible| !visible)
+}
+
+/// Whether the window can safely go back to the tray: an icon exists and the
+/// desktop still hosts it.
+pub fn can_hide_to_tray(app: &AppHandle) -> bool {
+    is_active(app) && available_now()
 }
 
 /// Window-close hook. Returns `true` when the close was turned into a hide
