@@ -36,6 +36,10 @@ export function NmhUnlock() {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   // What had focus before the dialog opened, to give it back on close.
   const returnFocusRef = useRef<Element | null>(null);
+  const wasOpenRef = useRef(false);
+  // Cancels that arrived before their request (the backend closed it while
+  // the request event was still on its way): that request must not show.
+  const cancelledIdsRef = useRef<string[]>([]);
   const activeRef = useRef(activeTab);
   activeRef.current = activeTab;
 
@@ -51,6 +55,11 @@ export function NmhUnlock() {
     const uns: Array<Promise<() => void>> = [
       listen<NmhUnlockRequest>(NMH_UNLOCK_REQUEST, (ev) => {
         const incoming = ev.payload;
+        const early = cancelledIdsRef.current.indexOf(incoming.req_id);
+        if (early >= 0) {
+          cancelledIdsRef.current.splice(early, 1);
+          return;
+        }
         const current = reqRef.current;
         if (current && current.req_id !== incoming.req_id) void nmhUnlockReply(current.req_id, false);
         if (!current) returnFocusRef.current = document.activeElement;
@@ -61,10 +70,13 @@ export function NmhUnlock() {
         setVault(active && incoming.vault_choices.includes(active) ? active : incoming.default_vault);
       }),
       listen<{ req_id: string | null }>(NMH_UNLOCK_CANCEL, (ev) => {
+        const id = ev.payload.req_id;
         const current = reqRef.current;
-        if (current && (ev.payload.req_id === null || ev.payload.req_id === current.req_id)) {
+        if (current && (id === null || id === current.req_id)) {
           reqRef.current = null;
           setReq(null);
+        } else if (id !== null) {
+          cancelledIdsRef.current = [...cancelledIdsRef.current.slice(-15), id];
         }
       }),
       // A vault unlocked anywhere (the tab behind the dialog, the tray)
@@ -82,7 +94,17 @@ export function NmhUnlock() {
     const full = Number.isFinite(left) && left > 0 ? Math.min(left, DEFAULT_TIMEOUT_SECS) : DEFAULT_TIMEOUT_SECS;
     const deadline = Date.now() + full * 1000;
     setTotal(full);
-    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    const id = req.req_id;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setSecondsLeft(left);
+      // Past the backend's deadline: the request is over whether or not its
+      // cancel event got here. Close without answering (no Cancel cooldown).
+      if (left === 0 && reqRef.current?.req_id === id) {
+        reqRef.current = null;
+        setReq(null);
+      }
+    };
     tick();
     const timer = window.setInterval(tick, 250);
     return () => window.clearInterval(timer);
@@ -123,13 +145,31 @@ export function NmhUnlock() {
     return () => document.removeEventListener("keydown", onDocKeyDown, true);
   }, [req]);
 
-  // Closed while the window stays up: hand focus back to where it was, if
-  // that element is still there (an unlock usually replaces the screen).
+  // Closed while the window stays up: hand focus back to where it was. When
+  // that element is gone (an unlock replaces the lock screen), focus the
+  // first control of the screen that took its place.
   useEffect(() => {
-    if (req) return;
+    if (req) {
+      wasOpenRef.current = true;
+      return;
+    }
+    if (!wasOpenRef.current) return;
+    wasOpenRef.current = false;
     const back = returnFocusRef.current;
     returnFocusRef.current = null;
-    if (back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true });
+    if (back instanceof HTMLElement && back !== document.body && back.isConnected) {
+      back.focus({ preventScroll: true });
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      if (reqRef.current) return;
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      document
+        .querySelector<HTMLElement>(".kv-body input:not([disabled]), .kv-body button:not([disabled])")
+        ?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [req]);
 
   if (!req || !vault) return null;
