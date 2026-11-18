@@ -58,6 +58,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const applyLocked = useCallback((vaultId: string | null) => {
+    // A tray Settings request must not survive its target locking: the
+    // later unlock would open Settings unasked.
+    clearTraySettingsRequest();
     setTabs((prev) =>
       prev.map((t) => (vaultId === null || t.vaultId === vaultId ? { ...t, locked: true } : t)),
     );
