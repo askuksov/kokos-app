@@ -202,6 +202,10 @@ impl UnlockGate {
                 if g.current.is_some() || !l.restore_taken.load(Ordering::SeqCst) {
                     l.was_hidden.store(true, Ordering::SeqCst);
                     false
+                } else if l.restore_pending.load(Ordering::SeqCst) {
+                    // The newer dialog's own restore is queued: that one hides,
+                    // this one does not, so the window is hidden once.
+                    false
                 } else {
                     should_rehide(
                         true,
@@ -424,6 +428,41 @@ mod tests {
         assert!(
             g.take_rehide(&b, Outcome::Cancelled),
             "B took over the tray duty"
+        );
+        assert!(g.claim_restore(&b));
+    }
+
+    #[test]
+    fn two_queued_restores_hide_the_window_once() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let a = slot_of(g.join(false, now));
+        a.set_was_hidden(true);
+        g.resolve(&a.req_id, Outcome::TimedOut, now);
+        assert!(g.take_rehide(&a, Outcome::TimedOut));
+        let b = slot_of(g.join(false, now));
+        b.set_was_hidden(true);
+        g.resolve(&b.req_id, Outcome::Cancelled, now);
+        assert!(g.take_rehide(&b, Outcome::Cancelled));
+        assert!(!g.claim_restore(&a), "B's queued restore does it");
+        assert!(g.claim_restore(&b));
+    }
+
+    #[test]
+    fn a_dialog_closed_before_it_showed_still_restores_what_it_inherited() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let a = slot_of(g.join(false, now));
+        a.set_was_hidden(true);
+        g.resolve(&a.req_id, Outcome::TimedOut, now);
+        assert!(g.take_rehide(&a, Outcome::TimedOut));
+        // B opens, A hands over, then B is closed on an early-return path.
+        let b = slot_of(g.join(false, now));
+        assert!(!g.claim_restore(&a));
+        g.resolve(&b.req_id, Outcome::TimedOut, now);
+        assert!(
+            g.take_rehide(&b, Outcome::TimedOut),
+            "B owes the restore it inherited"
         );
         assert!(g.claim_restore(&b));
     }
