@@ -60,6 +60,8 @@ export function NmhUnlock() {
           cancelledIdsRef.current.splice(early, 1);
           return;
         }
+        // Already past the backend's deadline on arrival: that request is over.
+        if (Number.isFinite(incoming.expires_at_ms) && incoming.expires_at_ms <= Date.now()) return;
         const current = reqRef.current;
         if (current && current.req_id !== incoming.req_id) void nmhUnlockReply(current.req_id, false);
         if (!current) returnFocusRef.current = document.activeElement;
@@ -90,8 +92,10 @@ export function NmhUnlock() {
 
   useEffect(() => {
     if (!req) return;
+    // The default applies only to a missing or unreadable deadline; an
+    // expired one never gets here (dropped on arrival).
     const left = Math.ceil((req.expires_at_ms - Date.now()) / 1000);
-    const full = Number.isFinite(left) && left > 0 ? Math.min(left, DEFAULT_TIMEOUT_SECS) : DEFAULT_TIMEOUT_SECS;
+    const full = Number.isFinite(left) ? Math.min(Math.max(left, 0), DEFAULT_TIMEOUT_SECS) : DEFAULT_TIMEOUT_SECS;
     const deadline = Date.now() + full * 1000;
     setTotal(full);
     const id = req.req_id;

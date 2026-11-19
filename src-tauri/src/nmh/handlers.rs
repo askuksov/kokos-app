@@ -163,6 +163,36 @@ fn unlock_precheck(choices: &[VaultChoice]) -> UnlockPrecheck {
     }
 }
 
+/// Sends the window back to the tray after `slot` finished, when it should go
+/// (see `UnlockGate::take_rehide` / `claim_restore`).
+fn restore_after(
+    app: &tauri::AppHandle,
+    slot: &std::sync::Arc<super::unlock::Slot>,
+    outcome: super::unlock::Outcome,
+) {
+    let st = app.state::<crate::state::AppState>();
+    if st.nmh.unlock.take_rehide(slot, outcome) && crate::tray::can_hide_to_tray(app) {
+        let handle = app.clone();
+        let restored = slot.clone();
+        let _ = app.run_on_main_thread(move || {
+            // A newer dialog may have been raised meanwhile; then it decides.
+            let gate = &handle.state::<crate::state::AppState>().nmh.unlock;
+            if gate.claim_restore(&restored) {
+                crate::tray::hide_window(&handle);
+            }
+        });
+    }
+}
+
+/// Closes a dialog that was never shown. It may still owe a send-back-to-tray
+/// handed over by an older request.
+fn close_unshown(app: &tauri::AppHandle, slot: &std::sync::Arc<super::unlock::Slot>) {
+    use super::unlock::Outcome;
+    let st = app.state::<crate::state::AppState>();
+    st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+    restore_after(app, slot, Outcome::TimedOut);
+}
+
 /// `request_unlock { url, keep_open? }`: the extension hit a locked app on a
 /// user action (key icon, Fill, shortcut, "Unlock and save") and asks the app
 /// to show its unlock dialog. The password is typed in the app only; the
@@ -213,11 +243,11 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
             // `cancel_unlock_request` runs, so one of the two catches it.
             let enabled = st.nmh.enabled.lock().map(|e| *e).unwrap_or(false);
             if !enabled {
-                st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+                close_unshown(app, &slot);
                 return Response::err(&req.id, codes::DENIED, "browser integration is off");
             }
             if app.get_webview_window("main").is_none() {
-                st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+                close_unshown(app, &slot);
                 return Response::err(&req.id, codes::INTERNAL, "no window to unlock in");
             }
             slot.set_was_hidden(crate::tray::is_main_hidden(app));
@@ -238,7 +268,7 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
                 }),
             );
             if emitted.is_err() {
-                st.nmh.unlock.resolve(&slot.req_id, Outcome::TimedOut, std::time::Instant::now());
+                close_unshown(app, &slot);
                 return Response::err(&req.id, codes::INTERNAL, "could not show the unlock dialog");
             }
             let handle = app.clone();
@@ -266,17 +296,7 @@ pub fn request_unlock(app: &tauri::AppHandle, req: &Request) -> Response {
     if outcome == Outcome::TimedOut {
         let _ = app.emit(EV_UNLOCK_CANCEL, serde_json::json!({ "req_id": slot.req_id }));
     }
-    if st.nmh.unlock.take_rehide(&slot, outcome) && crate::tray::can_hide_to_tray(app) {
-        let handle = app.clone();
-        let restored = slot.clone();
-        let _ = app.run_on_main_thread(move || {
-            // A newer dialog may have been raised meanwhile; then it decides.
-            let gate = &handle.state::<crate::state::AppState>().nmh.unlock;
-            if gate.claim_restore(&restored) {
-                crate::tray::hide_window(&handle);
-            }
-        });
-    }
+    restore_after(app, &slot, outcome);
 
     match outcome {
         // The WebView is not the authority: check that a vault really opened.
