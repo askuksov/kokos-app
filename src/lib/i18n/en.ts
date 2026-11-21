@@ -248,6 +248,7 @@ export const en: Record<string, string> = {
   "errors.fastUnlockKeyfileUnsupported": "Fast unlock isn't available for key-file vaults.",
   "errors.fastUnlockStoreFailed": "Couldn't save the password for fast unlock. Please try again.",
   "errors.fastUnlockRevokeFailed": "Couldn't remove the saved password from the system credential store. Fast unlock is still enabled — please try again.",
+  "errors.unlockSuperseded": "Kokos locked while the vault was opening. Open it again.",
   "settings.storageWarningMac": "Storing your master password — for Password or Touch ID unlock — weakens the guarantee that the vault file is useless without it. It stays on this device only and is never synced — only enable it on a device you trust. Touch ID additionally requires a matching fingerprint, on top of the stored password.",
   "settings.oldCredentialKept": "Switched, but the previous saved credential could not be removed. Turn fast unlock off and on again to clear it.",
   "settings.storageWarning": "Storing your master password weakens the guarantee that the vault file is useless without it. It stays on this device only and is never synced — only enable it on a device you trust.",

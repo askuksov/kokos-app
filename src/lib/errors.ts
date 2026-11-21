@@ -5,7 +5,17 @@ const ERROR_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ["biometric_store_failed", "errors.biometricStoreFailed"],
   ["fast_unlock_keyfile_unsupported", "errors.fastUnlockKeyfileUnsupported"],
   ["fast_unlock_store_failed", "errors.fastUnlockStoreFailed"],
+  ["unlock_superseded", "errors.unlockSuperseded"],
 ];
+
+/**
+ * The vault was locked (Lock All, auto-lock, sleep, closing to the tray) while
+ * this unlock was still running. Not a credential problem: a saved password
+ * is still good, so callers keep offering it.
+ */
+export function isUnlockSuperseded(err: unknown): boolean {
+  return String(err).includes("unlock_superseded");
+}
 
 /** Translate a known backend error token, else show the raw error verbatim. */
 export function errorMessage(err: unknown, t: TFn): string {

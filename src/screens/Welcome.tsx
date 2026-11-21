@@ -21,7 +21,7 @@ import { useTabs } from "../state/TabsContext";
 import { useT } from "../state/LangContext";
 import { PasswordField } from "../components/PasswordField";
 import { fileBasename, tildify } from "../lib/format";
-import { errorMessage } from "../lib/errors";
+import { errorMessage, isUnlockSuperseded } from "../lib/errors";
 import { RestoreWizard } from "./RestoreWizard";
 import kokosLogo from "../assets/kokos-logo.png";
 import "./Welcome.css";
@@ -266,7 +266,7 @@ export function WelcomeScreen() {
       await keychainUnlock(pending.path);
       await refreshStatus();
     } catch (err) {
-      setPendingHasSaved(false);
+      if (!isUnlockSuperseded(err)) setPendingHasSaved(false);
       setError(errorMessage(err, t));
     } finally {
       setBusy(false);
@@ -304,7 +304,7 @@ export function WelcomeScreen() {
       }
       await refreshStatus();
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err, t));
     } finally {
       setBusy(false);
     }
