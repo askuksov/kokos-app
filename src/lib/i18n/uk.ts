@@ -452,6 +452,7 @@ export const uk: Record<string, string> = {
   "sync.conflictWarn": "Зовнішня синхронізація створила конфлікт-копії: {files}",
   "sync.pill.off": "Синхр. вимк",
   "sync.state.synced": "Синхронізовано",
+  "sync.state.pending": "Очікує вивантаження",
   "sync.needsAttention": "Потребує уваги",
   "sync.rel.now": "щойно",
   "sync.rel.min": "{n} хв тому",

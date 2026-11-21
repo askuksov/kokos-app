@@ -68,6 +68,7 @@ import { PasswordHealth } from "./PasswordHealth";
 import type { SettingsTab } from "../state/VaultContext";
 import { useTextImport } from "../state/TextImportContext";
 import { CHROME_STORE_ID, FIREFOX_STORE_ID } from "../lib/storeExtensionIds";
+import { SYNC_STATUS_CHANGED } from "../lib/useSyncStatus";
 import "./Settings.css";
 
 type StorageMode = "off" | "password" | "touchid";
@@ -335,6 +336,9 @@ export function Settings() {
       setSyncSt(await syncStatus());
     } catch {
     }
+    // Every sync action here ends with this refresh; let the sidebar
+    // indicator re-read its own status too.
+    window.dispatchEvent(new Event(SYNC_STATUS_CHANGED));
   };
   useEffect(() => {
     refreshSync();
