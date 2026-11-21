@@ -14,11 +14,16 @@ struct Entry {
 pub struct SessionRegistry {
     entries: Vec<Entry>,
     active: Option<VaultId>,
+    /// Bumped by every `lock_all`. An unlock reads it before its slow KDF and
+    /// publishes the session only if it is unchanged, so a lock-all that lands
+    /// in between (Lock All, idle lock, sleep, hide-to-tray with lock on
+    /// close) is not undone by an unlock that started earlier.
+    lock_epoch: u64,
 }
 
 impl SessionRegistry {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), active: None }
+        Self { entries: Vec::new(), active: None, lock_epoch: 0 }
     }
 
     fn pos(&self, id: &str) -> Option<usize> {
@@ -99,10 +104,19 @@ impl SessionRegistry {
         }
     }
 
+    /// Also starts a new lock epoch, see `lock_epoch`. `lock_one` does not:
+    /// it targets an open vault, while an unlock in flight targets a locked
+    /// one, and a second unlock of the same vault is already refused at
+    /// publish time by the `AlreadyOpen` check.
     pub fn lock_all(&mut self) {
+        self.lock_epoch = self.lock_epoch.wrapping_add(1);
         for e in &mut self.entries {
             e.session.lock();
         }
+    }
+
+    pub fn lock_epoch(&self) -> u64 {
+        self.lock_epoch
     }
 
     pub fn open_paths(&self) -> Vec<String> {
@@ -208,6 +222,27 @@ mod tests {
         assert!(r.lock_one("/a"));
         assert!(!r.lock_one("/missing"));
         r.lock_all();
+    }
+
+    #[test]
+    fn lock_all_starts_a_new_epoch_lock_one_does_not() {
+        let mut r = reg_with(&["/a", "/b"]);
+        let before = r.lock_epoch();
+        r.lock_one("/a");
+        assert_eq!(r.lock_epoch(), before, "locking one vault must not cancel unlocks of others");
+        r.lock_all();
+        let after = r.lock_epoch();
+        assert_ne!(after, before, "an unlock started before lock-all must see a changed epoch");
+        r.insert("/c".into(), Session::new());
+        assert_eq!(r.lock_epoch(), after, "an unlock after lock-all keeps the new epoch and goes through");
+    }
+
+    #[test]
+    fn lock_all_bumps_the_epoch_even_with_nothing_open() {
+        let mut r = SessionRegistry::new();
+        let before = r.lock_epoch();
+        r.lock_all();
+        assert_ne!(r.lock_epoch(), before, "restored locked tabs live outside the registry, so an unlock can be in flight with nothing in it");
     }
 
     #[test]

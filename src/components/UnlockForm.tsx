@@ -13,7 +13,7 @@ import {
 import { useT } from "../state/LangContext";
 import { PasswordField } from "./PasswordField";
 import { KeyfileField } from "./KeyfileField";
-import { errorMessage } from "../lib/errors";
+import { errorMessage, isUnlockSuperseded } from "../lib/errors";
 
 // The unlock controls for one vault: hint, Touch ID, saved password, master
 // password (+ key file). Shared by the locked tab screen and the extension
@@ -76,7 +76,10 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
     try {
       await keychainUnlock(path);
       await afterOpen();
-    } catch (err) { setHasSaved(false); setError(errorMessage(err, t)); }
+    } catch (err) {
+      if (!isUnlockSuperseded(err)) setHasSaved(false);
+      setError(errorMessage(err, t));
+    }
     finally { setBusy(false); }
   }
 
@@ -96,7 +99,7 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
       await openVault(path, password, keyfile);
       await afterOpen();
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err, t));
     } finally { setBusy(false); }
   }
 
