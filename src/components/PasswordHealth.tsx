@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useVault } from "../state/VaultContext";
 import { useT, useTn } from "../state/LangContext";
 import { healthScan, hibpCheck } from "../ipc/commands";
@@ -12,7 +12,11 @@ export function PasswordHealth({ embedded }: { embedded?: boolean }) {
   const { setRoute } = useVault();
   const t = useT();
   const tn = useTn();
+  // null = scan still running; a failed scan is kept apart from an empty
+  // report so it is never shown as "no weak / reused passwords".
   const [report, setReport] = useState<HealthReport | null>(null);
+  const [scanFailed, setScanFailed] = useState(false);
+  const scanTokenRef = useRef(0);
   const { settings } = useSettings();
   const [hibp, setHibp] = useState<HibpReport | null>(null);
   const [hibpLoading, setHibpLoading] = useState(false);
@@ -34,11 +38,15 @@ export function PasswordHealth({ embedded }: { embedded?: boolean }) {
   }, [settings.hibp_enabled, runHibp]);
 
   const load = useCallback(async () => {
+    const token = ++scanTokenRef.current;
+    setReport(null);
+    setScanFailed(false);
     try {
-      setReport(await healthScan());
+      const r = await healthScan();
+      if (token === scanTokenRef.current) setReport(r);
     } catch (e) {
       console.error("health_scan failed:", e);
-      setReport({ weak: [], reused: [] });
+      if (token === scanTokenRef.current) setScanFailed(true);
     }
   }, []);
 
@@ -49,48 +57,69 @@ export function PasswordHealth({ embedded }: { embedded?: boolean }) {
   const weak = report?.weak ?? [];
   const reused = report?.reused ?? [];
 
+  const scanning = (
+    <div className="kv-card">
+      <p className="kv-health-empty">{t("health.scanning")}</p>
+    </div>
+  );
+
   const body = (
     <>
       <p className="kv-settings-sub">{t("health.subtitle")}</p>
 
-      <h2 className="kv-health-section">{t("health.weakTitle")}</h2>
-      {weak.length === 0 ? (
+      {scanFailed ? (
         <div className="kv-card">
-          <p className="kv-health-empty">{t("health.weakEmpty")}</p>
+          <p className="kv-health-empty">{t("health.scanFailed")}</p>
+          <button type="button" className="kv-btn is-ghost" onClick={() => void load()}>
+            {t("health.scanRetry")}
+          </button>
         </div>
       ) : (
-        <div className="kv-card">
-          {weak.map((w, i) => (
-            <div className="kv-manage-row kv-health-row" key={`${w.entry_id}:${w.field_name}:${i}`}>
-              <div className="kv-health-row-main">
-                <span className="kv-health-title">{w.title}</span>
-                <span className="kv-health-meta">{w.field_name}</span>
-              </div>
-              <span className="kv-health-badge is-weak">{t("strength." + w.strength)}</span>
+        <>
+          <h2 className="kv-health-section">{t("health.weakTitle")}</h2>
+          {!report ? (
+            scanning
+          ) : weak.length === 0 ? (
+            <div className="kv-card">
+              <p className="kv-health-empty">{t("health.weakEmpty")}</p>
             </div>
-          ))}
-        </div>
-      )}
+          ) : (
+            <div className="kv-card">
+              {weak.map((w, i) => (
+                <div className="kv-manage-row kv-health-row" key={`${w.entry_id}:${w.field_name}:${i}`}>
+                  <div className="kv-health-row-main">
+                    <span className="kv-health-title">{w.title}</span>
+                    <span className="kv-health-meta">{w.field_name}</span>
+                  </div>
+                  <span className="kv-health-badge is-weak">{t("strength." + w.strength)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
-      <h2 className="kv-health-section">{t("health.reusedTitle")}</h2>
-      {reused.length === 0 ? (
-        <div className="kv-card">
-          <p className="kv-health-empty">{t("health.reusedEmpty")}</p>
-        </div>
-      ) : (
-        <div className="kv-card">
-          {reused.map((g, i) => (
-            <div className="kv-manage-row kv-health-row" key={`${g.entries.map((e) => e.entry_id).join("-")}:${i}`}>
-              <div className="kv-health-row-main">
-                <span className="kv-health-title">
-                  {g.entries.map((e) => e.title).join(", ")}
-                </span>
-                <span className="kv-health-meta">{tn("health.reusedCount", g.count)}</span>
-              </div>
-              <span className="kv-health-badge is-reused">{g.count}</span>
+          <h2 className="kv-health-section">{t("health.reusedTitle")}</h2>
+          {!report ? (
+            scanning
+          ) : reused.length === 0 ? (
+            <div className="kv-card">
+              <p className="kv-health-empty">{t("health.reusedEmpty")}</p>
             </div>
-          ))}
-        </div>
+          ) : (
+            <div className="kv-card">
+              {reused.map((g, i) => (
+                <div className="kv-manage-row kv-health-row" key={`${g.entries.map((e) => e.entry_id).join("-")}:${i}`}>
+                  <div className="kv-health-row-main">
+                    <span className="kv-health-title">
+                      {g.entries.map((e) => e.title).join(", ")}
+                    </span>
+                    <span className="kv-health-meta">{tn("health.reusedCount", g.count)}</span>
+                  </div>
+                  <span className="kv-health-badge is-reused">{g.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <div className="kv-health-section-head">
@@ -110,7 +139,7 @@ export function PasswordHealth({ embedded }: { embedded?: boolean }) {
         <div className="kv-card">
           <p className="kv-health-empty">{t("health.compromisedDisabled")}</p>
         </div>
-      ) : hibpLoading && !hibp ? (
+      ) : !hibp ? (
         <div className="kv-card">
           <p className="kv-health-empty">{t("health.compromisedChecking")}</p>
         </div>
