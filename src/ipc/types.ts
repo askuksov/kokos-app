@@ -14,6 +14,8 @@ export interface SyncStatusInfo {
   conflicts: string[];
   not_synced_warning: boolean;
   note: string | null;
+  /** Google Drive: never uploaded, or local changes newer than the last upload. */
+  pending_upload: boolean;
 }
 
 export interface SyncOutcome {

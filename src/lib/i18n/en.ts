@@ -451,6 +451,7 @@ export const en: Record<string, string> = {
   "sync.conflictWarn": "External sync created conflict copies: {files}",
   "sync.pill.off": "Sync off",
   "sync.state.synced": "Synced",
+  "sync.state.pending": "Upload pending",
   "sync.needsAttention": "Needs attention",
   "sync.rel.now": "just now",
   "sync.rel.min": "{n}m ago",

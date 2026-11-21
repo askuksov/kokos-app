@@ -2,13 +2,14 @@
 import type { SyncStatusInfo } from "../ipc/types";
 
 export type SyncPhase = "idle" | "syncing" | "error";
-export type SyncVisualState = "synced" | "syncing" | "warning" | "error" | "off";
+export type SyncVisualState = "synced" | "pending" | "syncing" | "warning" | "error" | "off";
 
 export interface SyncProviderLine {
   id: "folder" | "gdrive";
   labelKey: string;
   lastSync: number;
   warning: boolean;
+  pending: boolean;
 }
 
 export interface SyncView {
@@ -32,6 +33,7 @@ function deriveProviders(info: SyncStatusInfo | null): {
         labelKey: info.kind === "folder" ? "sync.folder" : "sync.gdrive",
         lastSync: info.last_sync,
         warning,
+        pending: info.pending_upload,
       },
     ],
     configured: true,
@@ -59,7 +61,8 @@ export function deriveSyncView(info: SyncStatusInfo | null, phase: SyncPhase): S
 
   const warning = info.not_synced_warning || info.conflicts.length > 0;
   const { providers, configured } = deriveProviders(info);
-  return { state: warning ? "warning" : "synced", providers, configured };
+  const state = warning ? "warning" : info.pending_upload ? "pending" : "synced";
+  return { state, providers, configured };
 }
 
 export type RelTime =

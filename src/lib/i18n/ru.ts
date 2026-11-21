@@ -451,6 +451,7 @@ export const ru: Record<string, string> = {
   "sync.conflictWarn": "Внешняя синхронизация создала конфликт-копии: {files}",
   "sync.pill.off": "Синхр. выкл",
   "sync.state.synced": "Синхронизировано",
+  "sync.state.pending": "Ожидает выгрузки",
   "sync.needsAttention": "Требует внимания",
   "sync.rel.now": "только что",
   "sync.rel.min": "{n} мин назад",

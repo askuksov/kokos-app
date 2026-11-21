@@ -8,6 +8,7 @@ import "./SyncStatusIndicator.css";
 
 const STATE_LABEL_KEY: Record<SyncVisualState, string> = {
   synced: "sync.state.synced",
+  pending: "sync.state.pending",
   syncing: "sync.syncing",
   warning: "sync.needsAttention",
   error: "sync.state.error",
@@ -19,6 +20,12 @@ const STATE_GLYPH: Record<SyncVisualState, ReactNode> = {
     <g>
       <circle cx="12" cy="12" r="8.4" />
       <path d="M8.4 12.4l2.4 2.4 4.9-5.3" />
+    </g>
+  ),
+  pending: (
+    <g>
+      <path d="M7 18a4 4 0 010-8 5 5 0 019.6-1.3A3.5 3.5 0 0117 18H7z" />
+      <path d="M12 15.5v-5M9.8 12.6L12 10.4l2.2 2.2" />
     </g>
   ),
   syncing: (
@@ -69,8 +76,10 @@ function SyncIcon({ state }: { state: SyncVisualState }) {
 
 export function SyncStatusIndicator() {
   const t = useT();
-  const { vaultId, refreshStatus, setRoute, setSettingsTab } = useVault();
-  const { view, busy, syncNow } = useSyncStatus(vaultId, refreshStatus);
+  const { vaultId, refreshStatus, setRoute, setSettingsTab, entries } = useVault();
+  // `entries` is reloaded after every save, delete, restore or move, so the
+  // pill picks up "upload pending" right after a local change.
+  const { view, busy, syncNow, refresh } = useSyncStatus(vaultId, refreshStatus, entries);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -109,7 +118,10 @@ export function SyncStatusIndicator() {
         className={`kv-side-item kv-sync-ind is-${view.state}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open) void refresh();
+          setOpen((o) => !o);
+        }}
       >
         <SyncIcon state={view.state} />
         <span className="label">{t(STATE_LABEL_KEY[view.state])}</span>

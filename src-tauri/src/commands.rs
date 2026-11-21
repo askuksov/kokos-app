@@ -74,6 +74,10 @@ pub struct SyncStatusInfo {
     pub conflicts: Vec<String>,
     pub not_synced_warning: bool,
     pub note: Option<String>,
+    /// Google Drive only: nothing was uploaded yet, or the vault has local
+    /// changes newer than the last uploaded revision. Lets the UI say
+    /// "upload pending" instead of "Synced".
+    pub pending_upload: bool,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -5652,14 +5656,18 @@ pub async fn sync_disable(app: tauri::AppHandle, state: State<'_, AppState>, vau
 #[tauri::command]
 pub fn sync_status(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: Option<String>) -> CmdResult<SyncStatusInfo> {
     use tauri::Manager;
-    let path = {
+    let (path, local_rev) = {
         let reg = state.sessions.lock().map_err(|e| e.to_string())?;
         let s = reg.resolve(vault_id.as_deref()).map(str::to_string).and_then(|id| reg.get(&id));
         match s.and_then(|s| s.vault.as_ref()) {
-            Some(v) => v.path.to_string_lossy().to_string(),
+            Some(v) => (
+                v.path.to_string_lossy().to_string(),
+                kokos_core::db::get_sync_revision(&v.conn).ok(),
+            ),
             None => return Ok(SyncStatusInfo {
                 kind: "none".into(), folder_path: None, gdrive_connected: false,
                 last_sync: 0, conflicts: vec![], not_synced_warning: false, note: None,
+                pending_upload: false,
             }),
         }
     };
@@ -5668,6 +5676,7 @@ pub fn sync_status(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: 
         crate::sync_config::SyncTarget::None => SyncStatusInfo {
             kind: "none".into(), folder_path: None, gdrive_connected: false,
             last_sync: 0, conflicts: vec![], not_synced_warning: false, note: None,
+            pending_upload: false,
         },
         crate::sync_config::SyncTarget::Folder { path: fp } => {
             let p = std::path::Path::new(&fp);
@@ -5679,15 +5688,25 @@ pub fn sync_status(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: 
                 conflicts: crate::synced_folder::sibling_conflicts(p),
                 not_synced_warning: !crate::synced_folder::looks_synced(p),
                 note: None,
+                pending_upload: false,
             }
         }
-        crate::sync_config::SyncTarget::Gdrive { file_id, last_sync, note, .. } => SyncStatusInfo {
+        crate::sync_config::SyncTarget::Gdrive { file_id, rev, last_sync, note, .. } => SyncStatusInfo {
             kind: "gdrive".into(), folder_path: None,
+            pending_upload: gdrive_upload_pending(file_id.is_some(), rev, local_rev),
             gdrive_connected: file_id.is_some(), last_sync,
             conflicts: vec![], not_synced_warning: false, note,
         },
     };
     Ok(info)
+}
+
+/// `gdrive_connect` records the target without uploading, so until the first
+/// push there is no remote file at all; after that, every `vault::save` bumps
+/// the local revision past the uploaded baseline until the next push. An
+/// unreadable local revision is reported as pending rather than as synced.
+fn gdrive_upload_pending(has_remote_file: bool, baseline: u64, local_rev: Option<u64>) -> bool {
+    !has_remote_file || local_rev.map_or(true, |r| r > baseline)
 }
 
 /// Process-wide cancel flag for the OAuth wait. One dance at a time is the
@@ -6569,6 +6588,15 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn gdrive_upload_pending_until_first_push_and_after_local_changes() {
+        assert!(gdrive_upload_pending(false, 0, Some(0)), "connected but never uploaded");
+        assert!(!gdrive_upload_pending(true, 5, Some(5)), "local revision equals the uploaded one");
+        assert!(gdrive_upload_pending(true, 5, Some(6)), "a save after the last push");
+        assert!(!gdrive_upload_pending(true, 7, Some(6)), "baseline ahead after a pull");
+        assert!(gdrive_upload_pending(true, 5, None), "unreadable local revision is not reported as synced");
+    }
 
     #[test]
     fn mode_may_reconcile_gates_skip_only() {
