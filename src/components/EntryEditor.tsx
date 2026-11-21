@@ -870,6 +870,10 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   }, []);
   const entryIdRef = useRef(entryId);
   entryIdRef.current = entryId;
+  // Create mode only: the id of the entry a previous save attempt already
+  // created. If a later step of that save failed (tags, refresh), a retry
+  // must update this entry instead of creating a duplicate.
+  const createdIdRef = useRef<string | null>(null);
   const nextClientKeyRef = useRef(0);
   function nextClientKey(): number {
     return nextClientKeyRef.current++;
@@ -900,6 +904,7 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   useEffect(() => {
     ++seedTokenRef.current;
     ++suggestTokenRef.current;
+    createdIdRef.current = null;
     setFolderSuggestions([]);
     setTagSuggestions([]);
     setSuggested(false);
@@ -998,8 +1003,11 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
     try {
       const plaintext = await revealField(currentId, fieldId);
       if (closedRef.current || entryIdRef.current !== currentId) return;
+      // A masked value can only change through the generator, which marks the
+      // row revealed; a reveal answer arriving after "Use" must not bring the
+      // old password back over the generated one.
       setFields((fs) =>
-        fs.map((f) => (f.id === fieldId ? { ...f, value: plaintext ?? "", revealed: true } : f)),
+        fs.map((f) => (f.id === fieldId && !f.revealed ? { ...f, value: plaintext ?? "", revealed: true } : f)),
       );
     } catch (e) {
       console.error("reveal_field failed:", e);
@@ -1154,7 +1162,8 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
     setSaving(true);
     try {
       let savedId: string;
-      if (entryId === null) {
+      const createdId = createdIdRef.current;
+      if (entryId === null && createdId === null) {
         const newEntry: NewEntry = {
           title: form.title.trim(),
           folder_id: folderId,
@@ -1163,8 +1172,10 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
           fields: buildNewFields(),
         };
         const created = await createEntry(newEntry);
+        createdIdRef.current = created.id;
         savedId = created.id;
       } else {
+        const targetId = entryId ?? createdId!;
         const patch: EntryPatch = {
           title: form.title.trim(),
           notes: form.notes,
@@ -1172,8 +1183,10 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
           folder_id: folderId,
           fields: buildFieldInputs(),
         };
-        await updateEntry(entryId, patch);
-        savedId = entryId;
+        // Fields without an id replace the whole set on update, so a retry of a
+        // half-finished create does not duplicate the fields it already wrote.
+        await updateEntry(targetId, patch);
+        savedId = targetId;
       }
       await setEntryTags(savedId, selectedTagIds);
       if (entryId !== null) onSaved?.();
