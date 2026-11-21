@@ -334,6 +334,39 @@ fn spawn_blocking_failed(_e: tauri::Error) -> String {
     "internal error".to_string()
 }
 
+/// Error token for an unlock that lost a race with a lock-all (Lock All, idle
+/// lock, sleep, hide-to-tray with lock on close). The front end translates it.
+const UNLOCK_SUPERSEDED: &str = "unlock_superseded";
+
+/// The registry's lock epoch, read before an unlock starts its slow work and
+/// compared again where the session is published (`SessionRegistry::lock_epoch`).
+fn lock_epoch(state: &AppState) -> CmdResult<u64> {
+    Ok(state.sessions.lock().map_err(|e| e.to_string())?.lock_epoch())
+}
+
+/// Cheap early exit between the KDF and the "unlock" audit row: nothing has
+/// been written yet, so the opened vault is just dropped, which wipes its key.
+fn ensure_not_superseded(state: &AppState, epoch: u64) -> CmdResult<()> {
+    if lock_epoch(state)? == epoch {
+        Ok(())
+    } else {
+        Err(UNLOCK_SUPERSEDED.to_string())
+    }
+}
+
+/// Wipes a vault whose unlock lost the race after its "unlock" audit row was
+/// saved: pairs that row with a "lock" one, like a lock-all would have, then
+/// drops the vault and its key. `save_opened` keeps the sync revision, since
+/// an audit row is not a content change.
+async fn discard_superseded(mut v: vault::OpenVault) -> String {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let _ = kokos_core::audit::append(&v.conn, "lock", None);
+        let _ = vault::save_opened(&mut v);
+    })
+    .await;
+    UNLOCK_SUPERSEDED.to_string()
+}
+
 /// Key-file paths get the same allowlist gate as vault paths. The UI only ever
 /// obtains one from `pick_any_file`, which allowlists it, so an unlisted path
 /// can only come from a compromised WebView. Ungated, `key_material` would
@@ -403,6 +436,7 @@ pub async fn create_vault(
     let pw = Zeroizing::new(password.into_bytes());
     let has_keyfile = keyfile_path.is_some();
     let path_for_recent = path.clone();
+    let epoch = lock_epoch(&state)?;
     let v = tauri::async_runtime::spawn_blocking(move || {
         vault::create(
             &PathBuf::from(path),
@@ -418,14 +452,25 @@ pub async fn create_vault(
 
     let result = info(&v)?;
     let vault_id = v.path.to_string_lossy().to_string();
-    {
+    let superseded = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
-        if let Some(s) = reg.get(&vault_id) {
-            ensure_no_vault_open(s)?;
+        if reg.lock_epoch() != epoch {
+            Some(v)
+        } else {
+            if let Some(s) = reg.get(&vault_id) {
+                ensure_no_vault_open(s)?;
+            }
+            let mut session = Session::new();
+            session.vault = Some(v);
+            reg.insert(vault_id.clone(), session);
+            None
         }
-        let mut session = Session::new();
-        session.vault = Some(v);
-        reg.insert(vault_id.clone(), session);
+    };
+    if let Some(v) = superseded {
+        // The file already exists on disk: list it in Recent so the user can
+        // open it again instead of creating a second one.
+        push_recent(&app, &path_for_recent, has_keyfile);
+        return Err(discard_superseded(v).await);
     }
     mark_restored_unlocked(&state, &vault_id);
     push_recent(&app, &path_for_recent, has_keyfile);
@@ -470,6 +515,7 @@ pub async fn open_vault(
     let has_keyfile = keyfile_path.is_some();
     let path_for_recent = path.clone();
     let cfg_dir = app.path().app_config_dir().ok();
+    let epoch = lock_epoch(&state)?;
 
     {
         let app = app.clone();
@@ -494,6 +540,7 @@ pub async fn open_vault(
             return Err(explain_vault_error(&e, &path_for_recent, crate::nmh::snap::instance_name().as_deref()));
         }
     };
+    ensure_not_superseded(&state, epoch)?;
 
     let n = cfg_dir.as_ref().map(|dir| crate::auth_failures::take(dir, &path_for_recent)).unwrap_or(0);
     let detail = (n > 0).then(|| format!("{n} failed attempts since last success"));
@@ -512,14 +559,22 @@ pub async fn open_vault(
 
     let result = info(&v)?;
     let vault_id = v.path.to_string_lossy().to_string();
-    {
+    let superseded = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
-        if let Some(s) = reg.get(&vault_id) {
-            ensure_no_vault_open(s)?;
+        if reg.lock_epoch() != epoch {
+            Some(v)
+        } else {
+            if let Some(s) = reg.get(&vault_id) {
+                ensure_no_vault_open(s)?;
+            }
+            let mut session = Session::new();
+            session.vault = Some(v);
+            reg.insert(vault_id.clone(), session);
+            None
         }
-        let mut session = Session::new();
-        session.vault = Some(v);
-        reg.insert(vault_id.clone(), session);
+    };
+    if let Some(v) = superseded {
+        return Err(discard_superseded(v).await);
     }
     mark_restored_unlocked(&state, &vault_id);
     push_recent(&app, &path_for_recent, has_keyfile);
@@ -860,6 +915,7 @@ pub async fn unlock_vault(
     };
     let path_str = path.to_string_lossy().to_string();
     let cfg_dir = app.path().app_config_dir().ok();
+    let epoch = lock_epoch(&state)?;
     let pw = Zeroizing::new(password.into_bytes());
 
     {
@@ -881,6 +937,7 @@ pub async fn unlock_vault(
             return Err(explain_vault_error(&e, &path_str, crate::nmh::snap::instance_name().as_deref()));
         }
     };
+    ensure_not_superseded(&state, epoch)?;
 
     let n = cfg_dir.as_ref().map(|dir| crate::auth_failures::take(dir, &path_str)).unwrap_or(0);
     let detail = (n > 0).then(|| format!("{n} failed attempts since last success"));
@@ -898,13 +955,21 @@ pub async fn unlock_vault(
     .map_err(spawn_blocking_failed)?;
 
     let result = info(&v)?;
-    {
+    let superseded = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
-        let s = reg.get_mut(&id).ok_or("nothing to unlock")?;
-        ensure_no_vault_open(s)?;
-        s.vault = Some(v);
-        s.last_path = None;
-        s.last_header = None;
+        if reg.lock_epoch() != epoch {
+            Some(v)
+        } else {
+            let s = reg.get_mut(&id).ok_or("nothing to unlock")?;
+            ensure_no_vault_open(s)?;
+            s.vault = Some(v);
+            s.last_path = None;
+            s.last_header = None;
+            None
+        }
+    };
+    if let Some(v) = superseded {
+        return Err(discard_superseded(v).await);
     }
     *state.last_activity.lock().map_err(|e| e.to_string())? = std::time::Instant::now();
     let _ = app.emit("vault-unlocked", serde_json::json!({ "vault_id": id }));
@@ -5201,10 +5266,12 @@ pub async fn keychain_unlock(
         Zeroizing::new(fetched.ok_or("no saved password")?.into_bytes())
     };
     let open_path = PathBuf::from(&path);
+    let epoch = lock_epoch(&state)?;
     let mut v = tauri::async_runtime::spawn_blocking(move || vault::open(&open_path, &pw, None))
         .await
         .map_err(spawn_blocking_failed)?
         .map_err(|e| e.to_string())?;
+    ensure_not_superseded(&state, epoch)?;
 
     let v = tauri::async_runtime::spawn_blocking(move || {
         let _ = kokos_core::audit::append(&v.conn, "unlock", None);
@@ -5216,14 +5283,22 @@ pub async fn keychain_unlock(
 
     let result = info(&v)?;
     let vault_id = v.path.to_string_lossy().to_string();
-    {
+    let superseded = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
-        if let Some(s) = reg.get(&path) {
-            ensure_no_vault_open(s)?;
+        if reg.lock_epoch() != epoch {
+            Some(v)
+        } else {
+            if let Some(s) = reg.get(&path) {
+                ensure_no_vault_open(s)?;
+            }
+            let mut session = Session::new();
+            session.vault = Some(v);
+            reg.insert(vault_id.clone(), session);
+            None
         }
-        let mut session = Session::new();
-        session.vault = Some(v);
-        reg.insert(vault_id.clone(), session);
+    };
+    if let Some(v) = superseded {
+        return Err(discard_superseded(v).await);
     }
     mark_restored_unlocked(&state, &vault_id);
     push_recent(&app, &path, false);
@@ -5327,12 +5402,14 @@ pub async fn touchid_unlock(
     }
     let open_path = PathBuf::from(&path);
     let read_path = path.clone();
+    let epoch = lock_epoch(&state)?;
     let mut v = tauri::async_runtime::spawn_blocking(move || -> Result<vault::OpenVault, String> {
         let pw = Zeroizing::new(crate::biometric_macos::unlock_biometric(&read_path)?.into_bytes());
         vault::open(&open_path, &pw, None).map_err(|e| e.to_string())
     })
     .await
     .map_err(spawn_blocking_failed)??;
+    ensure_not_superseded(&state, epoch)?;
 
     let v = tauri::async_runtime::spawn_blocking(move || {
         let _ = kokos_core::audit::append(&v.conn, "unlock", None);
@@ -5344,14 +5421,22 @@ pub async fn touchid_unlock(
 
     let result = info(&v)?;
     let vault_id = v.path.to_string_lossy().to_string();
-    {
+    let superseded = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
-        if let Some(s) = reg.get(&path) {
-            ensure_no_vault_open(s)?;
+        if reg.lock_epoch() != epoch {
+            Some(v)
+        } else {
+            if let Some(s) = reg.get(&path) {
+                ensure_no_vault_open(s)?;
+            }
+            let mut session = Session::new();
+            session.vault = Some(v);
+            reg.insert(vault_id.clone(), session);
+            None
         }
-        let mut session = Session::new();
-        session.vault = Some(v);
-        reg.insert(vault_id.clone(), session);
+    };
+    if let Some(v) = superseded {
+        return Err(discard_superseded(v).await);
     }
     mark_restored_unlocked(&state, &vault_id);
     push_recent(&app, &path, false);
