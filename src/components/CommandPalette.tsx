@@ -143,6 +143,9 @@ export function CommandPalette({ open, onClose, onNewEntry, onLock }: CommandPal
     setResults([]);
     setRelated([]);
     setSelRaw(0);
+    // Arrows, Enter and Esc are handled on the input, so it must keep focus
+    // after a sub-mode is entered or left.
+    inputRef.current?.focus({ preventScroll: true });
   }
 
   const actions: PaletteItem[] = [
@@ -296,6 +299,13 @@ export function CommandPalette({ open, onClose, onNewEntry, onLock }: CommandPal
         aria-modal="true"
         aria-label={t("palette.ariaLabel")}
         onClick={(e) => e.stopPropagation()}
+        // Rows, headers and the footer are not focusable: a mousedown on them
+        // would move focus to <body> and leave the keyboard with no handler
+        // (Vault's own Esc handler stands down while the palette is open).
+        // The input itself keeps its default so the caret can be placed.
+        onMouseDown={(e) => {
+          if (e.target !== inputRef.current) e.preventDefault();
+        }}
       >
         <div className="kv-palette-input">
           <Icon name="search" size={17} />
