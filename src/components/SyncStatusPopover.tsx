@@ -47,7 +47,11 @@ export function SyncStatusPopover({
               <span>{t(p.labelKey)}</span>
               <span> • </span>
               <span className={p.warning ? "kv-sync-pop-warn" : undefined}>
-                {p.warning ? t("sync.needsAttention") : t("sync.state.synced")}
+                {p.warning
+                  ? t("sync.needsAttention")
+                  : p.pending
+                    ? t("sync.state.pending")
+                    : t("sync.state.synced")}
               </span>
               {relLabel !== null ? <span> · {relLabel}</span> : null}
             </div>

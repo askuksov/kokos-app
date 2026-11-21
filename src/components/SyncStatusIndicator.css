@@ -4,6 +4,7 @@
 }
 .kv-sync-ind-ico { transform-origin: center; }
 .kv-sync-ind.is-synced .kv-sync-ind-ico { color: var(--ok); }
+.kv-sync-ind.is-pending .kv-sync-ind-ico { color: var(--accent); }
 .kv-sync-ind.is-warning .kv-sync-ind-ico { color: var(--warn); }
 .kv-sync-ind.is-error .kv-sync-ind-ico { color: var(--danger); }
 .kv-sync-ind.is-off .kv-sync-ind-ico { color: var(--text-3); }
