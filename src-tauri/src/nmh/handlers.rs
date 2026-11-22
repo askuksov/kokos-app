@@ -2229,6 +2229,23 @@ impl MatchBudget {
     }
 }
 
+/// The password field `login_password_matches` compares against, taken from
+/// the entry as reread under the final session lock, after checking its
+/// anchor again (`update_login` does the same): an edit landing between the
+/// gate and the compare must not be answered for the old url or old field.
+/// `Err` carries the wire code.
+fn match_field(
+    scope: &ConnScope,
+    entry_id: &str,
+    url: Option<&str>,
+    fresh: &[kokos_core::entries::Field],
+) -> Result<String, &'static str> {
+    if !anchored(scope, entry_id, url, &entry_urls_of(fresh)) {
+        return Err(codes::NOT_IN_SCOPE);
+    }
+    pick_password_field(fresh).ok_or(codes::ENTRY_NOT_FOUND)
+}
+
 /// `login_password_matches`: does `password` equal the stored password of
 /// `entry_id`? Lets the extension stay quiet when a user typed the password
 /// Kokos already holds, instead of offering to "update" it to the same value.
@@ -2266,10 +2283,6 @@ pub fn login_password_matches(
         Ok(g) => g,
         Err(resp) => return resp,
     };
-    let field_id = match pick_password_field(&gate.fields) {
-        Some(id) => id,
-        None => return Response::err(&req.id, codes::ENTRY_NOT_FOUND, "no password field found"),
-    };
 
     let mut reg = match st.sessions.lock() {
         Ok(reg) => reg,
@@ -2286,6 +2299,24 @@ pub fn login_password_matches(
                 .expect("Access::Open guarantees a vault is present"),
         },
     };
+    let fresh = match kokos_core::entries::get(&v.conn, &gate.entry_id) {
+        Ok(Some(e)) => e,
+        Ok(None) => return Response::err(&req.id, codes::ENTRY_NOT_FOUND, "entry not found"),
+        Err(_) => return Response::err(&req.id, codes::INTERNAL, "failed to read the vault"),
+    };
+    let url = optional_url_arg(&req.payload).ok().flatten();
+    let field_id = match match_field(scope, &gate.entry_id, url.as_deref(), &fresh.fields) {
+        Ok(id) => id,
+        Err(code) => {
+            drop(reg);
+            if code == codes::NOT_IN_SCOPE {
+                let denial = format!("login_password_matches@{}", gate.domain);
+                super::audit_denial(app, &denial, &denial);
+                return Response::err(&req.id, code, "entry is not in scope for this connection");
+            }
+            return Response::err(&req.id, code, "no password field found");
+        }
+    };
     match kokos_core::entries::field_value_matches(
         &v.conn,
         &gate.entry_id,
@@ -2301,6 +2332,47 @@ pub fn login_password_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn match_field_rechecks_the_anchor_and_picks_from_the_reread_entry() {
+        let f = |id: &str, tpl: Option<&str>, name: &str, ty: &str, value: Option<&str>| {
+            kokos_core::entries::Field {
+                id: id.into(),
+                entry_id: "e1".into(),
+                template_id: tpl.map(Into::into),
+                name: name.into(),
+                value: value.map(Into::into),
+                is_protected: ty == "secret",
+                field_type: ty.into(),
+                sort_order: 0,
+                strength: None,
+            }
+        };
+        let scope = ConnScope::default(); // not offered: only the entry's urls anchor it
+        let url = Some("https://a.com/login");
+        let fresh = vec![
+            f("u", None, "URL", "url", Some("https://a.com")),
+            f("p2", Some("tpl_password"), "Password", "secret", None),
+        ];
+        assert_eq!(match_field(&scope, "e1", url, &fresh), Ok("p2".to_string()));
+
+        let moved = vec![
+            f("u", None, "URL", "url", Some("https://b.com")),
+            f("p2", Some("tpl_password"), "Password", "secret", None),
+        ];
+        assert_eq!(
+            match_field(&scope, "e1", url, &moved),
+            Err(codes::NOT_IN_SCOPE),
+            "an entry whose url changed after the gate is no longer in scope"
+        );
+
+        let no_password = vec![f("u", None, "URL", "url", Some("https://a.com"))];
+        assert_eq!(
+            match_field(&scope, "e1", url, &no_password),
+            Err(codes::ENTRY_NOT_FOUND),
+            "a password field removed after the gate is not compared"
+        );
+    }
 
     #[test]
     fn match_budget_caps_checks_per_window_and_refills() {
