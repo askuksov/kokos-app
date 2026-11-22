@@ -58,6 +58,11 @@ export function vaultLabels(choices: VaultChoice[]): Map<string, string> {
 // Fallback when an older backend sends no timeout_secs (its deadline was 60 s).
 const DEFAULT_TIMEOUT_SECS = 60;
 
+// Allow and "remember" stay disabled this long after a request is shown, so a
+// click aimed at the previous prompt (or at whatever was under the window)
+// cannot approve one the user has not read.
+const ARM_DELAY_MS = 700;
+
 type NmhConfirmCancel = { req_id: string | null };
 
 const ACTION_KEYS: Record<string, string> = {
@@ -77,12 +82,20 @@ export function NmhConfirm() {
   const [req, setReq] = useState<NmhConfirmRequest | null>(null);
   const reqRef = useRef<NmhConfirmRequest | null>(null);
   const denyRef = useRef<HTMLButtonElement | null>(null);
-  const [remember, setRemember] = useState(false);
+  // Choices are keyed by the request they were made on, so a request that
+  // replaces the shown one starts clean even before the next render.
+  const [rememberFor, setRememberFor] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(DEFAULT_TIMEOUT_SECS);
-  const [vault, setVault] = useState<string | null>(null);
+  const [vaultPick, setVaultPick] = useState<{ reqId: string; vault: string } | null>(null);
+  const [armedId, setArmedId] = useState<string | null>(null);
 
-  function replyOnce(id: string, allowed: boolean, pickedVault: string | null = null) {
-    void nmhConfirmReply(id, allowed, allowed && remember, allowed ? pickedVault : null);
+  const reqId = req?.req_id ?? null;
+  const remember = reqId != null && rememberFor === reqId;
+  const vault = vaultPick && vaultPick.reqId === reqId ? vaultPick.vault : (req?.default_vault ?? null);
+  const armed = reqId != null && armedId === reqId;
+
+  function replyOnce(id: string, allowed: boolean, rememberSite = false, pickedVault: string | null = null) {
+    void nmhConfirmReply(id, allowed, allowed && rememberSite, allowed ? pickedVault : null);
   }
 
   useEffect(() => {
@@ -126,9 +139,10 @@ export function NmhConfirm() {
   }, []);
 
   useEffect(() => {
-    setRemember(false);
-    setVault(req?.default_vault ?? null);
-  }, [req?.req_id]);
+    if (reqId == null) return;
+    const timer = window.setTimeout(() => setArmedId(reqId), ARM_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [reqId]);
 
   // Count down to the backend's auto-deny. The backend closes the prompt itself
   // (nmh-confirm-cancel) when the time is up; this only shows how long is left.
@@ -156,13 +170,17 @@ export function NmhConfirm() {
     if (req && !trayIntroOpen()) denyRef.current?.focus({ preventScroll: true });
   }, [req]);
 
-  function close(allowed: boolean) {
+  // `shownId` is the request the clicked button was rendered for. A request
+  // that replaced it after that render has not been seen yet: the click is
+  // dropped rather than answering it.
+  function close(allowed: boolean, shownId: string | null = reqId) {
     const current = reqRef.current;
-    if (!current) return;
+    if (!current || current.req_id !== shownId) return;
+    if (allowed && !armed) return;
     reqRef.current = null;
     setReq(null);
     const picked = (current.vault_choices?.length ?? 0) >= 2 ? vault : null;
-    replyOnce(current.req_id, allowed, picked);
+    replyOnce(current.req_id, allowed, remember, picked);
   }
 
   useEffect(() => {
@@ -178,7 +196,7 @@ export function NmhConfirm() {
     }
     document.addEventListener("keydown", onDocKeyDown, true);
     return () => document.removeEventListener("keydown", onDocKeyDown, true);
-  }, [req, vault]);
+  }, [req, vault, remember, armed]);
 
   if (!req) return null;
 
@@ -217,7 +235,7 @@ export function NmhConfirm() {
                 <select
                   className="kv-nmh-vault-select"
                   value={vault ?? ""}
-                  onChange={(ev) => setVault(ev.target.value)}
+                  onChange={(ev) => setVaultPick({ reqId: req.req_id, vault: ev.target.value })}
                 >
                   {choices.map((c) => (
                     <option key={c.id} value={c.id} disabled={c.locked}>
@@ -241,7 +259,8 @@ export function NmhConfirm() {
                 <input
                   type="checkbox"
                   checked={remember}
-                  onChange={(ev) => setRemember(ev.target.checked)}
+                  disabled={!armed}
+                  onChange={(ev) => setRememberFor(ev.target.checked ? req.req_id : null)}
                 />
                 {t("nmh.rememberSite")}
               </label>
@@ -259,10 +278,15 @@ export function NmhConfirm() {
           </p>
         </div>
         <div className="kv-modal-footer">
-          <button type="button" className="kv-btn is-primary" ref={denyRef} onClick={() => close(false)}>
+          <button type="button" className="kv-btn is-primary" ref={denyRef} onClick={() => close(false, req.req_id)}>
             {t("nmh.deny")}
           </button>
-          <button type="button" className="kv-btn is-ghost" onClick={() => close(true)}>
+          <button
+            type="button"
+            className="kv-btn is-ghost"
+            disabled={!armed}
+            onClick={() => close(true, req.req_id)}
+          >
             {t("nmh.allow")}
           </button>
         </div>
