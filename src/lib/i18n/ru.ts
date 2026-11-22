@@ -98,6 +98,8 @@ export const ru: Record<string, string> = {
   "list.bulkMove": "Переместить",
   "list.bulkTag": "Тег",
   "list.bulkExport": "Экспорт",
+  "list.exportWarn": "⚠ Пароли будут записаны без шифрования (выбрано: {n}).",
+  "list.exportConfirm": "Всё равно экспортировать",
   "list.doneSelect": "Готово",
   "list.noTags": "Нет тегов",
   "list.copyUsername": "Скопировать имя пользователя",

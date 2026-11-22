@@ -98,6 +98,8 @@ export const uk: Record<string, string> = {
   "list.bulkMove": "Перемістити",
   "list.bulkTag": "Тег",
   "list.bulkExport": "Експорт",
+  "list.exportWarn": "⚠ Паролі буде записано без шифрування (вибрано: {n}).",
+  "list.exportConfirm": "Все одно експортувати",
   "list.doneSelect": "Готово",
   "list.noTags": "Немає тегів",
   "list.copyUsername": "Копіювати ім'я користувача",
