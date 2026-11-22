@@ -2170,9 +2170,150 @@ pub fn update_login(
     }
 }
 
+/// Most `login_password_matches` answers per `MATCH_BUDGET_WINDOW`, across
+/// every connection. A person submits a login form a few times a minute at
+/// most; the cap only matters to a caller trying to guess a stored password
+/// through the yes/no answer, which no confirmation dialog would otherwise slow.
+const MATCH_BUDGET_MAX: u32 = 10;
+const MATCH_BUDGET_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Fixed-window counter behind `MATCH_BUDGET_MAX`, held on `NmhState`.
+#[derive(Default)]
+pub struct MatchBudget {
+    window_start: Option<std::time::Instant>,
+    used: u32,
+}
+
+impl MatchBudget {
+    /// Spends one check; false once the window's budget is gone.
+    pub fn take(&mut self, now: std::time::Instant) -> bool {
+        let expired = match self.window_start {
+            None => true,
+            Some(s) => now.saturating_duration_since(s) >= MATCH_BUDGET_WINDOW,
+        };
+        if expired {
+            self.window_start = Some(now);
+            self.used = 0;
+        }
+        if self.used >= MATCH_BUDGET_MAX {
+            return false;
+        }
+        self.used += 1;
+        true
+    }
+}
+
+/// `login_password_matches`: does `password` equal the stored password of
+/// `entry_id`? Lets the extension stay quiet when a user typed the password
+/// Kokos already holds, instead of offering to "update" it to the same value.
+///
+/// Payload is `update_login`'s (`entry_id`, non-empty `password`, optional
+/// `url`), and so are the gates: the entry must be anchored to this
+/// connection or the url, its vault unlocked. No confirmation: the answer is
+/// a single `{ "matches": bool }`, the stored value never leaves core
+/// (`entries::field_value_matches`, constant-time), and `MatchBudget` caps
+/// how many answers any caller can collect.
+pub fn login_password_matches(
+    app: &tauri::AppHandle,
+    req: &Request,
+    scope: &ConnScope,
+) -> Response {
+    let args = match update_args(&req.payload) {
+        Ok(a) => a,
+        Err(e) => return Response::err(&req.id, e.code, &e.message),
+    };
+
+    let st = app.state::<crate::state::AppState>();
+    let allowed = match st.nmh.match_budget.lock() {
+        Ok(mut b) => b.take(std::time::Instant::now()),
+        Err(_) => false,
+    };
+    if !allowed {
+        let url = optional_url_arg(&req.payload).ok().flatten();
+        let domain = domain_for(url.as_deref(), scope.last_domain.as_deref());
+        let detail = format!("login_password_matches@{domain}");
+        super::audit_denial(app, &detail, &detail);
+        return Response::err(&req.id, codes::DENIED, "too many password checks");
+    }
+
+    let gate = match secret_gate(app, req, scope, "login_password_matches") {
+        Ok(g) => g,
+        Err(resp) => return resp,
+    };
+    let field_id = match pick_password_field(&gate.fields) {
+        Some(id) => id,
+        None => return Response::err(&req.id, codes::ENTRY_NOT_FOUND, "no password field found"),
+    };
+
+    let mut reg = match st.sessions.lock() {
+        Ok(reg) => reg,
+        Err(_) => return Response::err(&req.id, codes::LOCKED, "vault session is unavailable"),
+    };
+    let v = match reg.get_mut(&gate.vault_id) {
+        None => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
+        Some(s) => match classify_access(s) {
+            Access::Locked => return Response::err(&req.id, codes::LOCKED, "vault is locked"),
+            Access::NoVault => return Response::err(&req.id, codes::NO_VAULT, "no vault is open"),
+            Access::Open => s
+                .vault
+                .as_ref()
+                .expect("Access::Open guarantees a vault is present"),
+        },
+    };
+    match kokos_core::entries::field_value_matches(
+        &v.conn,
+        &gate.entry_id,
+        &field_id,
+        &args.password,
+    ) {
+        Ok(Some(matches)) => Response::ok(&req.id, serde_json::json!({ "matches": matches })),
+        Ok(None) => Response::err(&req.id, codes::ENTRY_NOT_FOUND, "entry not found"),
+        Err(_) => Response::err(&req.id, codes::INTERNAL, "failed to read the vault"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn match_budget_caps_checks_per_window_and_refills() {
+        let t0 = std::time::Instant::now();
+        let mut b = MatchBudget::default();
+        for i in 0..MATCH_BUDGET_MAX {
+            assert!(b.take(t0), "check {i} is within the budget");
+        }
+        assert!(!b.take(t0), "one past the budget is refused");
+        assert!(
+            !b.take(t0 + MATCH_BUDGET_WINDOW - std::time::Duration::from_millis(1)),
+            "still refused until the window ends"
+        );
+        assert!(
+            b.take(t0 + MATCH_BUDGET_WINDOW),
+            "a new window refills the budget"
+        );
+    }
+
+    #[test]
+    fn login_password_matches_takes_update_logins_payload() {
+        let a = update_args(
+            &serde_json::json!({ "entry_id": "e1", "password": "pw", "url": "https://a.com/x" }),
+        )
+        .expect("a well-formed check");
+        assert_eq!((a.entry_id.as_str(), a.password.as_str()), ("e1", "pw"));
+        for bad in [
+            serde_json::json!({ "entry_id": "e1", "password": "" }),
+            serde_json::json!({ "entry_id": "e1" }),
+            serde_json::json!({ "password": "pw" }),
+            serde_json::json!({ "entry_id": "e1", "password": 7 }),
+        ] {
+            assert_eq!(
+                update_args(&bad).err().map(|e| e.code),
+                Some(codes::BAD_REQUEST),
+                "{bad}"
+            );
+        }
+    }
 
     #[test]
     fn gen_opts_are_read_with_sane_defaults_and_clamped() {
