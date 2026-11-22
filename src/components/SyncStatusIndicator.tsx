@@ -131,6 +131,7 @@ export function SyncStatusIndicator() {
           view={view}
           busy={busy}
           onSyncNow={syncNow}
+          onRetry={() => void refresh()}
           onOpenSyncSettings={openSyncSettings}
         />
       ) : null}

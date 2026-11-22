@@ -463,6 +463,8 @@ export const uk: Record<string, string> = {
   "sync.settings": "Налаштування синхр.…",
   "sync.notConfigured": "Синхронізацію не налаштовано",
   "sync.state.error": "Помилка синхр.",
+  "sync.readFailed": "Не вдалося прочитати стан синхронізації.",
+  "sync.retry": "Повторити",
   "sync.remoteNewer": "Доступна новіша версія з іншого пристрою.",
   "sync.remoteNewerReopen": "Перезавантажити",
   "sync.remoteNewerDismiss": "Відхилити",

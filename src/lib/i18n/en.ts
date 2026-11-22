@@ -463,6 +463,8 @@ export const en: Record<string, string> = {
   "sync.settings": "Sync settings…",
   "sync.notConfigured": "Sync isn't set up",
   "sync.state.error": "Sync error",
+  "sync.readFailed": "Couldn't read the sync status.",
+  "sync.retry": "Try again",
   "sync.remoteNewer": "A newer version is available from another device.",
   "sync.remoteNewerReopen": "Reload",
   "sync.remoteNewerDismiss": "Dismiss",
