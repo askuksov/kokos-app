@@ -33,6 +33,7 @@ import { entryTypeMeta } from "../lib/entryTypes";
 import type { StrengthScore } from "../lib/strength";
 import { previewKind, type PreviewKind } from "../lib/attachmentPreview";
 import { AttachmentLightbox } from "./AttachmentLightbox";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { RelationPicker } from "./RelationPicker";
 import { TotpField } from "./TotpField";
 import "./EntryDetail.css";
@@ -440,6 +441,8 @@ function HistoryModal({
 
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef);
 
   useEffect(() => {
     function onKeyDown(ev: KeyboardEvent) {
@@ -490,6 +493,8 @@ function HistoryModal({
         role="dialog"
         aria-modal="true"
         aria-label={t("detail.historyAriaLabel", { name: field.name })}
+        tabIndex={-1}
+        ref={dialogRef}
         onClick={(ev) => ev.stopPropagation()}
       >
         <div className="kv-modal-header">
