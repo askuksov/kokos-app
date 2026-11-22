@@ -547,6 +547,20 @@ pub fn list_field_history(conn: &Connection, entry_id: &str, field_name: &str) -
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// One past value of a field, `None` when no such history row exists for the
+/// entry. An empty (NULL) past value reads as "".
+pub fn field_history_value(conn: &Connection, entry_id: &str, history_id: &str) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    let value = conn
+        .query_row(
+            "SELECT COALESCE(value, '') FROM entry_field_history WHERE id = ?1 AND entry_id = ?2",
+            rusqlite::params![history_id, entry_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(value)
+}
+
 pub fn clear_field_history(conn: &Connection, entry_id: &str, field_name: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM entry_field_history WHERE entry_id = ?1 AND field_name = ?2",

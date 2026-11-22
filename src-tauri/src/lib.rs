@@ -127,6 +127,7 @@ pub fn run() {
             commands::add_relation,
             commands::delete_relation,
             commands::list_field_history,
+            commands::reveal_field_history,
             commands::clear_field_history,
             commands::set_entry_tags,
             commands::add_entry_tag,

@@ -248,9 +248,9 @@ export interface RelationView {
   relation_type: string;
 }
 
+// Past values are not listed; read one with revealFieldHistory.
 export interface HistoryEntry {
   id: string;
-  value: string | null;
   changed_at: number;
 }
 
