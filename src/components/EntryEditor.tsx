@@ -989,9 +989,10 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   }, [entryId]);
 
   // The editor replaces the list and detail it was opened from, so on close
-  // focus goes to the entry's row (or the new-entry button) instead.
+  // focus goes to the entry's row (or the new-entry button) instead. The
+  // sidebar stays clickable beside it, so focus is not pulled back from there.
   const dialogRef = useRef<HTMLDivElement>(null);
-  useModalFocus(dialogRef, { fallbackFocus: editorReturnTarget });
+  useModalFocus(dialogRef, { fallbackFocus: editorReturnTarget, holdFocus: false });
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {

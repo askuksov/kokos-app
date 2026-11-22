@@ -257,6 +257,7 @@ export function NmhConfirm() {
             <>
               <label className="kv-nmh-remember">
                 <input
+                  key={req.req_id}
                   type="checkbox"
                   checked={remember}
                   disabled={!armed}
@@ -281,7 +282,11 @@ export function NmhConfirm() {
           <button type="button" className="kv-btn is-primary" ref={denyRef} onClick={() => close(false, req.req_id)}>
             {t("nmh.deny")}
           </button>
+          {/* Keyed by request: a replacement mounts a new button, so a press
+              that began on the old prompt cannot complete as a click on the
+              new one, however long it is held. */}
           <button
+            key={req.req_id}
             type="button"
             className="kv-btn is-ghost"
             disabled={!armed}
