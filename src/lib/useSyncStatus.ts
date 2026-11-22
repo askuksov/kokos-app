@@ -18,6 +18,7 @@ export function useSyncStatus(
 ): { view: SyncView; busy: boolean; syncNow: () => Promise<void>; refresh: () => Promise<void> } {
   const [status, setStatus] = useState<SyncStatusInfo | null>(null);
   const [phase, setPhase] = useState<SyncPhase>("idle");
+  const [readFailed, setReadFailed] = useState(false);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
   // Every status read takes a number; only the latest one may write, so an
   // older answer that lands last cannot turn "Upload pending" back into "Synced".
@@ -27,20 +28,18 @@ export function useSyncStatus(
     if (!vaultId) {
       setStatus(null);
       setPhase("idle");
+      setReadFailed(false);
       refreshRef.current = async () => {};
       return;
     }
     setPhase("idle");
+    // Another vault's status must not show while this one loads or fails.
+    setStatus(null);
+    setReadFailed(false);
     let ignore = false;
     const refresh = async () => {
       const seq = ++statusSeq.current;
-      const isLatest = () => !ignore && seq === statusSeq.current;
-      try {
-        const s = await syncStatus(vaultId);
-        if (isLatest()) setStatus(s);
-      } catch {
-        if (isLatest()) setStatus(null);
-      }
+      await readStatus(vaultId, () => !ignore && seq === statusSeq.current);
     };
     refreshRef.current = refresh;
     refresh();
@@ -66,6 +65,21 @@ export function useSyncStatus(
 
   const refresh = useCallback(() => refreshRef.current(), []);
 
+  // Writes only while `isLatest()` holds. A failed read keeps the last known
+  // status and flags it, instead of reporting sync as off.
+  async function readStatus(id: string | undefined, isLatest: () => boolean) {
+    try {
+      const s = await syncStatus(id);
+      if (isLatest()) {
+        setStatus(s);
+        setReadFailed(false);
+      }
+    } catch (e) {
+      console.error("sync_status failed:", e);
+      if (isLatest()) setReadFailed(true);
+    }
+  }
+
   const syncNow = async () => {
     setPhase("syncing");
     try {
@@ -74,22 +88,14 @@ export function useSyncStatus(
         await refreshStatus();
       }
       const seq = ++statusSeq.current;
-      try {
-        const s = await syncStatus(vaultId);
-        if (seq === statusSeq.current) setStatus(s);
-      } catch {
-      }
+      await readStatus(vaultId, () => seq === statusSeq.current);
       setPhase("idle");
     } catch {
       setPhase("error");
       const seq = ++statusSeq.current;
-      try {
-        const s = await syncStatus(vaultId);
-        if (seq === statusSeq.current) setStatus(s);
-      } catch {
-      }
+      await readStatus(vaultId, () => seq === statusSeq.current);
     }
   };
 
-  return { view: deriveSyncView(status, phase), busy: phase === "syncing", syncNow, refresh };
+  return { view: deriveSyncView(status, phase, readFailed), busy: phase === "syncing", syncNow, refresh };
 }

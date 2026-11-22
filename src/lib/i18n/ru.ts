@@ -463,6 +463,8 @@ export const ru: Record<string, string> = {
   "sync.settings": "Настройки синхр.…",
   "sync.notConfigured": "Синхронизация не настроена",
   "sync.state.error": "Ошибка синхр.",
+  "sync.readFailed": "Не удалось прочитать статус синхронизации.",
+  "sync.retry": "Повторить",
   "sync.remoteNewer": "Доступна новая версия с другого устройства.",
   "sync.remoteNewerReopen": "Перезагрузить",
   "sync.remoteNewerDismiss": "Отклонить",
