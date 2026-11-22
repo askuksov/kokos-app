@@ -16,6 +16,8 @@ export interface SyncView {
   state: SyncVisualState;
   providers: SyncProviderLine[];
   configured: boolean;
+  /** The last status read failed: what is shown may be stale, offer a retry. */
+  readFailed: boolean;
 }
 
 function deriveProviders(info: SyncStatusInfo | null): {
@@ -40,29 +42,27 @@ function deriveProviders(info: SyncStatusInfo | null): {
   };
 }
 
-export function deriveSyncView(info: SyncStatusInfo | null, phase: SyncPhase): SyncView {
-  if (info === null) {
-    return { state: "off", providers: [], configured: false };
-  }
-
+export function deriveSyncView(info: SyncStatusInfo | null, phase: SyncPhase, readFailed = false): SyncView {
   if (phase === "syncing") {
     const { providers, configured } = deriveProviders(info);
-    return { state: "syncing", providers, configured };
+    return { state: "syncing", providers, configured, readFailed };
   }
 
-  if (phase === "error") {
+  // A failed read is not "sync is off": show an error with the last known
+  // providers, if any, and let the popover offer a retry.
+  if (phase === "error" || readFailed) {
     const { providers, configured } = deriveProviders(info);
-    return { state: "error", providers, configured };
+    return { state: "error", providers, configured, readFailed };
   }
 
-  if (info.kind === "none") {
-    return { state: "off", providers: [], configured: false };
+  if (info === null || info.kind === "none") {
+    return { state: "off", providers: [], configured: false, readFailed };
   }
 
   const warning = info.not_synced_warning || info.conflicts.length > 0;
   const { providers, configured } = deriveProviders(info);
   const state = warning ? "warning" : info.pending_upload ? "pending" : "synced";
-  return { state, providers, configured };
+  return { state, providers, configured, readFailed };
 }
 
 export type RelTime =
