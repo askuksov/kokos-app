@@ -137,13 +137,9 @@ function TrashRow({
  * VaultContext" call Sidebar.tsx's own `trashCount` badge makes for the
  * identical command.
  *
- * Sidebar.tsx's `trashCount` badge effect re-fetches on every `route`
- * change, so it does NOT live-update while the user stays on this page
- * performing multiple restore/delete/empty actions in a row. It catches up
- * the moment the user leaves: `setRoute("main")` (the Back button below)
- * or any other navigation changes `route`, and Sidebar's effect re-fires
- * and re-reads a now-correct count. The badge is only ever stale WHILE
- * this page is the active route, never after leaving it.
+ * Sidebar.tsx's `trashCount` badge re-counts whenever the entry list is
+ * reloaded, so the `refreshEntries()` in every action below also keeps the
+ * badge in step while the user stays on this page.
  *
  * Every action (restore / permanent-delete / empty) re-fetches the trash
  * list AND `refreshEntries()`/`refreshFolders()`/`refreshTags()` (a restore
