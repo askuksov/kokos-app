@@ -425,6 +425,10 @@ function HistoryModal({
   const concealTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // Bumped whenever reveals are dropped, so a value still in flight is not shown.
   const concealEpochRef = useRef(0);
+  // Per row: bumped when that row is concealed, so a reveal of it still in
+  // flight is dropped too. A row listed in `pendingRef` has a reveal in flight.
+  const rowEpochRef = useRef<Map<string, number>>(new Map());
+  const pendingRef = useRef<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -472,12 +476,15 @@ function HistoryModal({
 
   function concealAll() {
     concealEpochRef.current += 1;
+    pendingRef.current.clear();
     for (const timer of concealTimersRef.current.values()) clearTimeout(timer);
     concealTimersRef.current.clear();
     setRevealed({});
   }
 
   function conceal(id: string) {
+    rowEpochRef.current.set(id, (rowEpochRef.current.get(id) ?? 0) + 1);
+    pendingRef.current.delete(id);
     const timer = concealTimersRef.current.get(id);
     if (timer !== undefined) clearTimeout(timer);
     concealTimersRef.current.delete(id);
@@ -490,14 +497,19 @@ function HistoryModal({
   }
 
   async function toggleRevealed(id: string) {
-    if (id in revealed) {
+    // A second click while the value is shown or still loading hides it.
+    if (id in revealed || pendingRef.current.has(id)) {
       conceal(id);
       return;
     }
     const epoch = concealEpochRef.current;
+    const rowEpoch = rowEpochRef.current.get(id) ?? 0;
+    const current = () => concealEpochRef.current === epoch && (rowEpochRef.current.get(id) ?? 0) === rowEpoch;
+    pendingRef.current.add(id);
     try {
       const value = await revealFieldHistory(entryId, id);
-      if (concealEpochRef.current !== epoch) return;
+      if (!current()) return;
+      pendingRef.current.delete(id);
       setRevealed((r) => ({ ...r, [id]: value }));
       const seconds = settings.conceal_seconds;
       if (seconds > 0) {
@@ -506,6 +518,7 @@ function HistoryModal({
         concealTimersRef.current.set(id, setTimeout(() => conceal(id), seconds * 1000));
       }
     } catch (e) {
+      if (current()) pendingRef.current.delete(id);
       console.error("reveal_field_history failed:", e);
     }
   }
