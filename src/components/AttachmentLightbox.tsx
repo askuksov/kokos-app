@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { readAttachmentBytes } from "../ipc/commands";
 import type { AttachmentMeta } from "../ipc/types";
 import { previewKind, TEXT_PREVIEW_MAX } from "../lib/attachmentPreview";
 import { useT } from "../state/LangContext";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { PdfPreview } from "./PdfPreview";
 import "./AttachmentLightbox.css";
 
@@ -49,6 +50,9 @@ export function AttachmentLightbox({
   const [idx, setIdx] = useState(startIdx);
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
   const current = items[idx];
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useModalFocus(panelRef);
 
   const go = useCallback(
     (delta: number) => {
@@ -121,9 +125,17 @@ export function AttachmentLightbox({
 
   return (
     <div className="kv-lb-scrim" onClick={onClose}>
-      <div className="kv-lb-panel" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={panelRef}
+        className="kv-lb-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="kv-lb-head">
-          <span className="kv-lb-title">{current?.filename}</span>
+          <span className="kv-lb-title" id={titleId}>{current?.filename}</span>
           {items.length > 1 ? <span className="kv-lb-counter">{idx + 1} / {items.length}</span> : null}
           <button type="button" className="kv-btn is-icon" title={t("preview.close")} aria-label={t("preview.close")} onClick={onClose}>
             <LbIcon name="close" />

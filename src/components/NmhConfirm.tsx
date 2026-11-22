@@ -4,6 +4,7 @@ import { useT } from "../state/LangContext";
 import { nmhConfirmReply } from "../ipc/commands";
 import { CountdownRing } from "./CountdownRing";
 import { vaultDisplayName } from "../lib/format";
+import { useModalFocus } from "../hooks/useModalFocus";
 import "./NmhConfirm.css";
 
 type NmhConfirmRequest = {
@@ -66,17 +67,19 @@ const ACTION_KEYS: Record<string, string> = {
   update_login: "nmh.actionUpdateLogin",
 };
 
+// The tray intro renders above this dialog and owns the keyboard while open.
+function trayIntroOpen(): boolean {
+  return document.querySelector(".kv-tray-intro-scrim") != null;
+}
+
 export function NmhConfirm() {
   const t = useT();
   const [req, setReq] = useState<NmhConfirmRequest | null>(null);
   const reqRef = useRef<NmhConfirmRequest | null>(null);
   const denyRef = useRef<HTMLButtonElement | null>(null);
-  const allowRef = useRef<HTMLButtonElement | null>(null);
   const [remember, setRemember] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(DEFAULT_TIMEOUT_SECS);
-  const rememberRef = useRef<HTMLInputElement | null>(null);
   const [vault, setVault] = useState<string | null>(null);
-  const vaultRef = useRef<HTMLSelectElement | null>(null);
 
   function replyOnce(id: string, allowed: boolean, pickedVault: string | null = null) {
     void nmhConfirmReply(id, allowed, allowed && remember, allowed ? pickedVault : null);
@@ -142,10 +145,15 @@ export function NmhConfirm() {
     return () => window.clearInterval(timer);
   }, [req?.req_id]);
 
+  // Tab trap and focus return. Called before the focus effect below so the
+  // element to return to is read before focus moves to Deny.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(dialogRef, { open: req != null, initialFocus: false, blocked: trayIntroOpen });
+
   useEffect(() => {
     // Behind an open tray intro, Enter would deny unseen; the intro hands
     // focus over when it closes.
-    if (req && !document.querySelector(".kv-tray-intro-scrim")) denyRef.current?.focus({ preventScroll: true });
+    if (req && !trayIntroOpen()) denyRef.current?.focus({ preventScroll: true });
   }, [req]);
 
   function close(allowed: boolean) {
@@ -162,31 +170,10 @@ export function NmhConfirm() {
     function onDocKeyDown(ev: KeyboardEvent) {
       // The tray intro renders above this dialog and owns the keyboard while
       // it is open; both listen on document, so yield to it here.
-      if (document.querySelector(".kv-tray-intro-scrim")) return;
+      if (trayIntroOpen()) return;
       if (ev.key === "Escape") {
         ev.stopPropagation();
         close(false);
-        return;
-      }
-      if (ev.key !== "Tab") return;
-      const stops = [vaultRef.current, rememberRef.current, denyRef.current, allowRef.current].filter(
-        (el): el is HTMLSelectElement | HTMLInputElement | HTMLButtonElement => el != null,
-      );
-      if (stops.length < 2) return;
-      const first = stops[0];
-      const last = stops[stops.length - 1];
-      const active = document.activeElement;
-      const idx = stops.findIndex((el) => el === active);
-      if (ev.shiftKey) {
-        if (idx === -1 || idx === 0) {
-          ev.preventDefault();
-          last.focus({ preventScroll: true });
-        }
-      } else {
-        if (idx === -1 || idx === stops.length - 1) {
-          ev.preventDefault();
-          first.focus({ preventScroll: true });
-        }
       }
     }
     document.addEventListener("keydown", onDocKeyDown, true);
@@ -204,6 +191,7 @@ export function NmhConfirm() {
   return (
     <div className="kv-modal-scrim kv-nmh-scrim">
       <div
+        ref={dialogRef}
         className="kv-modal"
         role="dialog"
         aria-modal="true"
@@ -227,7 +215,6 @@ export function NmhConfirm() {
               <span>{t("nmh.saveTo")}</span>
               <span className="kv-nmh-vault-wrap">
                 <select
-                  ref={vaultRef}
                   className="kv-nmh-vault-select"
                   value={vault ?? ""}
                   onChange={(ev) => setVault(ev.target.value)}
@@ -253,7 +240,6 @@ export function NmhConfirm() {
               <label className="kv-nmh-remember">
                 <input
                   type="checkbox"
-                  ref={rememberRef}
                   checked={remember}
                   onChange={(ev) => setRemember(ev.target.checked)}
                 />
@@ -276,7 +262,7 @@ export function NmhConfirm() {
           <button type="button" className="kv-btn is-primary" ref={denyRef} onClick={() => close(false)}>
             {t("nmh.deny")}
           </button>
-          <button type="button" className="kv-btn is-ghost" ref={allowRef} onClick={() => close(true)}>
+          <button type="button" className="kv-btn is-ghost" onClick={() => close(true)}>
             {t("nmh.allow")}
           </button>
         </div>
