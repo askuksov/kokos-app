@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { useModalFocus } from "../hooks/useModalFocus";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useVault } from "../state/VaultContext";
 import { useT } from "../state/LangContext";
@@ -819,6 +820,10 @@ interface EntryEditorProps {
  * a closing-animation window is a window where a revealed secret would
  * still be sitting in memory for no reason.
  */
+function editorReturnTarget(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(".kv-row.is-active") ?? document.querySelector<HTMLElement>("[data-new-entry]");
+}
+
 export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initialTagId }: EntryEditorProps) {
   const { refreshEntries, refreshTags, refreshFolders, setSaveError, folders, tags, templates } = useVault();
   const t = useT();
@@ -982,6 +987,11 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
       cancelled = true;
     };
   }, [entryId]);
+
+  // The editor replaces the list and detail it was opened from, so on close
+  // focus goes to the entry's row (or the new-entry button) instead.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, { fallbackFocus: editorReturnTarget });
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -1233,10 +1243,12 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
 
   return (
     <div
+      ref={dialogRef}
       className="kv-slideover"
       role="dialog"
       aria-modal="true"
       aria-label={entryId ? t("editor.editEntryTitle") : t("editor.newEntryTitle")}
+      tabIndex={-1}
     >
         <div className="kv-slideover-head">
           <h2>{entryId ? t("editor.editEntryTitle") : t("editor.newEntryTitle")}</h2>

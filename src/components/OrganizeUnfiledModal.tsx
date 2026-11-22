@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../state/LangContext";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { aiOrganizeUnfiled, aiApplyOrganize } from "../ipc/commands";
 import type { OrganizeGroup, OrganizeApplyGroup } from "../ipc/types";
 import "./OrganizeUnfiledModal.css";
@@ -20,6 +21,7 @@ export default function OrganizeUnfiledModal({ onClose, onApplied }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  useModalFocus(panelRef, { initialFocus: panelRef });
 
   useEffect(() => {
     let cancelled = false;
@@ -48,7 +50,6 @@ export default function OrganizeUnfiledModal({ onClose, onApplied }: Props) {
   }, []);
 
   useEffect(() => {
-    panelRef.current?.focus({ preventScroll: true });
     function onKeyDown(ev: KeyboardEvent) {
       if (ev.key === "Escape") {
         ev.stopPropagation();

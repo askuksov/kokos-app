@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { aiSemanticSearch, aiStatus, searchEntries } from "../ipc/commands";
 import { useVault } from "../state/VaultContext";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { useTabs } from "../state/TabsContext";
 import { useT } from "../state/LangContext";
 import type { EntrySummary, FolderNode, SemanticHit } from "../ipc/types";
@@ -79,9 +80,8 @@ export function CommandPalette({ open, onClose, onNewEntry, onLock }: CommandPal
     setSelRaw(0);
   }, [open]);
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus({ preventScroll: true });
-  }, [open]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(dialogRef, { open, initialFocus: inputRef });
 
   useEffect(() => {
     if (!open) return;
@@ -294,6 +294,7 @@ export function CommandPalette({ open, onClose, onNewEntry, onLock }: CommandPal
   return (
     <div className="kv-palette-scrim" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="kv-palette"
         role="dialog"
         aria-modal="true"
