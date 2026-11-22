@@ -98,6 +98,8 @@ export const en: Record<string, string> = {
   "list.bulkMove": "Move",
   "list.bulkTag": "Tag",
   "list.bulkExport": "Export",
+  "list.exportWarn": "⚠ Passwords will be written unencrypted ({n} selected).",
+  "list.exportConfirm": "Export anyway",
   "list.doneSelect": "Done",
   "list.noTags": "No tags",
   "list.copyUsername": "Copy username",

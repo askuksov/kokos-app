@@ -169,11 +169,12 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
-  const [openPopover, setOpenPopover] = useState<"move" | "tag" | null>(null);
+  const [openPopover, setOpenPopover] = useState<"move" | "tag" | "export" | null>(null);
   const [busy, setBusy] = useState(false);
   const [exportDone, setExportDone] = useState(false);
   const moveAnchorRef = useRef<HTMLDivElement | null>(null);
   const tagAnchorRef = useRef<HTMLDivElement | null>(null);
+  const exportAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const viewSignature = `${nav.kind}:${nav.kind === "view" ? nav.view : nav.id}:${filters.favoritesOnly}:${filters.regex}:${search}`;
 
@@ -210,7 +211,7 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
 
   useEffect(() => {
     if (!openPopover) return;
-    const anchorRef = openPopover === "move" ? moveAnchorRef : tagAnchorRef;
+    const anchorRef = openPopover === "move" ? moveAnchorRef : openPopover === "tag" ? tagAnchorRef : exportAnchorRef;
     function onDown(ev: PointerEvent) {
       if (anchorRef.current && !anchorRef.current.contains(ev.target as Node)) setOpenPopover(null);
     }
@@ -277,6 +278,7 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
   }
 
   async function doBulkExport() {
+    setOpenPopover(null);
     setBusy(true);
     try {
       const path = await pickSavePath("kokos-selected.json");
@@ -515,15 +517,37 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            className="kv-btn is-ghost"
-            disabled={busy}
-            style={exportDone ? { color: "var(--ok)" } : undefined}
-            onClick={() => void doBulkExport()}
-          >
-            {t("list.bulkExport")}
-          </button>
+          <div className="kv-bulk-anchor" ref={exportAnchorRef}>
+            <button
+              type="button"
+              className="kv-btn is-ghost"
+              disabled={busy}
+              style={exportDone ? { color: "var(--ok)" } : undefined}
+              aria-expanded={openPopover === "export"}
+              onClick={() => setOpenPopover((p) => (p === "export" ? null : "export"))}
+            >
+              {t("list.bulkExport")}
+            </button>
+            {openPopover === "export" && (
+              // The export file is plain JSON: say so before the save dialog.
+              <div className="kv-bulk-pop kv-bulk-confirm">
+                <p className="kv-bulk-warn">{t("list.exportWarn", { n: selected.size })}</p>
+                <div className="kv-bulk-confirm-actions">
+                  <button type="button" className="kv-btn is-ghost" onClick={() => setOpenPopover(null)}>
+                    {t("common.cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    className="kv-btn is-primary"
+                    disabled={busy}
+                    onClick={() => void doBulkExport()}
+                  >
+                    {t("list.exportConfirm")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </section>
