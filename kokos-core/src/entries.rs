@@ -598,6 +598,32 @@ pub fn reveal_field(
     }
 }
 
+/// Whether `candidate` equals the stored value of `field_id` on a live entry;
+/// `None` when the field (or entry) does not exist. The stored value never
+/// leaves this function, and is wiped once compared.
+pub fn field_value_matches(
+    conn: &Connection,
+    entry_id: &str,
+    field_id: &str,
+    candidate: &str,
+) -> Result<Option<bool>> {
+    let stored = reveal_field(conn, entry_id, field_id)?.map(zeroize::Zeroizing::new);
+    Ok(stored.map(|s| constant_time_eq(s.as_bytes(), candidate.as_bytes())))
+}
+
+/// Byte equality whose running time depends only on the longer input's
+/// length, never on where the inputs first differ.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let len = a.len().max(b.len());
+    let mut diff = u8::from(a.len() != b.len());
+    for i in 0..len {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        diff |= x ^ y;
+    }
+    std::hint::black_box(diff) == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1139,6 +1165,40 @@ mod tests {
                 reveal_field(&conn, &e.id, pw_id).unwrap().is_none(),
                 "[{label}] a trashed entry's field is not revealable"
             );
+        }
+    }
+
+    #[test]
+    fn field_value_matches_compares_without_returning_the_secret() {
+        for (label, conn) in both_dbs() {
+            let e = create(
+                &conn,
+                NewEntry {
+                    title: "Site".into(), folder_id: None, notes: None, entry_type: "login".into(),
+                    fields: vec![NewField { template_id: Some("tpl_password".into()), name: "Password".into(),
+                                            value: Some("hunter2".into()), is_protected: true, field_type: "secret".into() }],
+                },
+                1000,
+            )
+            .unwrap();
+            let got = get(&conn, &e.id).unwrap().unwrap();
+            let pw_id = &got.fields[0].id;
+
+            assert_eq!(field_value_matches(&conn, &e.id, pw_id, "hunter2").unwrap(), Some(true), "[{label}]");
+            assert_eq!(field_value_matches(&conn, &e.id, pw_id, "hunter3").unwrap(), Some(false), "[{label}]");
+            assert_eq!(field_value_matches(&conn, &e.id, pw_id, "hunter").unwrap(), Some(false), "[{label}] prefix");
+            assert_eq!(field_value_matches(&conn, &e.id, pw_id, "hunter22").unwrap(), Some(false), "[{label}] longer");
+            assert_eq!(field_value_matches(&conn, &e.id, "no-such-field", "hunter2").unwrap(), None, "[{label}]");
+
+            soft_delete(&conn, &e.id, 2000).unwrap();
+            assert_eq!(field_value_matches(&conn, &e.id, pw_id, "hunter2").unwrap(), None, "[{label}] trashed");
+        }
+    }
+
+    #[test]
+    fn constant_time_eq_matches_plain_equality() {
+        for (a, b) in [("", ""), ("a", ""), ("", "a"), ("abc", "abc"), ("abc", "abd"), ("abc", "ab"), ("ab\0", "ab")] {
+            assert_eq!(constant_time_eq(a.as_bytes(), b.as_bytes()), a == b, "{a:?} vs {b:?}");
         }
     }
 

@@ -74,6 +74,9 @@ pub struct NmhState {
     /// `DenyBudget`). Independent of the single-slot `last_denied` dedupe,
     /// which alternating keys can defeat. Not security state -- log hygiene.
     pub deny_budget: Mutex<DenyBudget>,
+    /// Global cap on `login_password_matches` answers (see
+    /// `handlers::MatchBudget`): security state, unlike the two above.
+    pub match_budget: Mutex<handlers::MatchBudget>,
     /// Last granted-release dedupe key + when, covering
     /// `extension_secret_granted`/`extension_totp_granted`
     /// (`audit_grant_release`). Deliberately a SEPARATE slot from
@@ -890,6 +893,7 @@ pub fn dispatch(
         "get_totp" => handlers::get_totp(app, &req, scope, &caller.origin),
         "save_login" => handlers::save_login(app, &req, &caller.origin),
         "update_login" => handlers::update_login(app, &req, scope, &caller.origin),
+        "login_password_matches" => handlers::login_password_matches(app, &req, scope),
         "generate_password" => handlers::generate_password(&req),
         "request_unlock" => handlers::request_unlock(app, &req),
         _ => Response::err(

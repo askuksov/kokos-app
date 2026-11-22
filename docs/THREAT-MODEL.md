@@ -165,6 +165,19 @@ and the access-control primitives it can use differ.
   is unlocked); the pick is accepted only when it names a vault the dialog
   offered as unlocked (`handlers::save_target`). Vault names and paths never
   reach the extension.
+- Password-match check: `login_password_matches`
+  (`handlers::login_password_matches`) answers only `{ "matches": bool }`:
+  does a password the user just submitted equal the stored password of an
+  entry. The extension uses it to stay quiet instead of offering to "update"
+  a login to the value it already has. Same gates as `update_login` (entry
+  anchored to the connection or the url, vault unlocked) but no confirmation
+  dialog. The stored value never leaves `kokos-core`
+  (`entries::field_value_matches`: constant-time compare, value wiped
+  afterwards). Since a yes/no answer is still a guessing oracle, the app gives
+  at most 10 answers per minute across all connections (`handlers::MatchBudget`)
+  and audits refusals as `extension_denied`. In the extension only the
+  background's save flow sends it, for a password just submitted on that site;
+  the page-facing request bridge refuses the action.
 - Unlock requests: when every open vault is locked, `request_unlock`
   (`handlers::request_unlock`) brings the window forward with an unlock
   dialog. The master password, Touch ID and the saved password are used in
@@ -393,6 +406,7 @@ consumers.
 | Keychain re-prompt / ACL | macOS platform | High (dev builds) / low (annoyance, not a break) | Keychain ACL is pinned to the binary's code signature (see boundary 7); a stable code-signing identity for release builds avoids the re-prompt | Mitigated (dev-mode limitation documented, not fixed) |
 | Vaults left unlocked in a background process | N/A (app lifecycle) | Medium / medium | Closing the window to the tray locks every vault by default (`lock_on_close`); idle auto-lock and lock-on-sleep keep running while the window is hidden, and a hidden window produces no input that would reset the idle timer | Accepted residual (when the user turns `lock_on_close` off) |
 | Extension raising the unlock dialog over and over (focus stealing / password-prompt fatigue) | NMH | Low / low (annoyance; the password is never typed outside the app) | User-action-only and enabled-site-only on the extension side; one dialog at a time and a 30 s refusal after Cancel in the app (`nmh/unlock.rs`) | Mitigated |
+| Guessing a stored password through the match check | NMH | Low / medium (a whitelisted caller learns one yes/no per guess) | Anchored entry and unlocked vault required; 10 answers per minute across all connections, refusals audited; not reachable from the extension's page-facing bridge | Mitigated (rate-limited) |
 | UDS peer-auth gap | NMH | Low / low (same-user access already compromises the vault) | `getpeereid(2)` same-uid gate + rotating shared-secret token in `Hello`; both defense-in-depth over the `0600` socket — see below | Mitigated (defense-in-depth) |
 
 ## Accepted / deferred risks
