@@ -202,6 +202,11 @@ impl UnlockGate {
         if !slot.restore_pending.swap(false, Ordering::SeqCst) {
             return false;
         }
+        // A restore for this dialog or a newer one already ran; the user may
+        // have reopened the window since. Epochs only grow.
+        if g.restored_epoch >= slot.epoch {
+            return false;
+        }
         let (hide, epoch) = match g.latest.as_ref() {
             Some(l) if l.epoch != slot.epoch => {
                 let hide = if g.current.is_some() || !l.restore_taken.load(Ordering::SeqCst) {
@@ -210,9 +215,6 @@ impl UnlockGate {
                 } else if l.restore_pending.load(Ordering::SeqCst) {
                     // The newer dialog's own restore is queued: that one hides,
                     // this one does not, so the window is hidden once.
-                    false
-                } else if g.restored_epoch == l.epoch {
-                    // The newer dialog's restore already ran.
                     false
                 } else {
                     should_rehide(
@@ -476,6 +478,27 @@ mod tests {
         assert!(g.claim_restore(&b));
         // The user may reopen the window here; A's late restore must not
         // hide it again.
+        assert!(!g.claim_restore(&a), "B's restore already ran");
+    }
+
+    #[test]
+    fn an_older_restore_stays_put_after_a_newer_one_ran_and_another_dialog_came() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let a = slot_of(g.join(false, now));
+        a.set_was_hidden(true);
+        g.resolve(&a.req_id, Outcome::TimedOut, now);
+        assert!(g.take_rehide(&a, Outcome::TimedOut));
+        let b = slot_of(g.join(false, now));
+        b.set_was_hidden(true);
+        g.resolve(&b.req_id, Outcome::Cancelled, now);
+        assert!(g.take_rehide(&b, Outcome::Cancelled));
+        assert!(g.claim_restore(&b));
+        // The user reopens the window; C opens over it and times out.
+        let c = slot_of(g.join(false, now));
+        c.set_was_hidden(false);
+        g.resolve(&c.req_id, Outcome::TimedOut, now);
+        assert!(!g.take_rehide(&c, Outcome::TimedOut));
         assert!(!g.claim_restore(&a), "B's restore already ran");
     }
 
