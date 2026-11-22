@@ -6424,7 +6424,7 @@ mod tests {
     }
     use super::{
         assemble_proposal, browser_for_grant_origin, browser_ids_after_install,
-        build_new_entries, built_first_secret, fast_unlock_keyfile_guard, keyfile_was_changed, merge_open_vaults, mode_may_reconcile, parse_browser, plan_reconcile, resolve_commit_folders,
+        build_new_entries, built_first_secret, fast_unlock_keyfile_guard, gdrive_upload_pending, keyfile_was_changed, merge_open_vaults, mode_may_reconcile, parse_browser, plan_reconcile, resolve_commit_folders,
         pull_mode_outcome, sanitize_whitelist_ids, validate_chrome_id, validate_firefox_id,
         CommitEntry, CommitField, CommitProposal, CompromisedFieldDto, EntrySummaryDto,
         FolderSuggestionDto, GenOptsDto, HibpReportDto, KeyfileActionDto, PullMode, SearchFilters, SemanticHitDto,

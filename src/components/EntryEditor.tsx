@@ -872,8 +872,10 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   entryIdRef.current = entryId;
   // Create mode only: the id of the entry a previous save attempt already
   // created. If a later step of that save failed (tags, refresh), a retry
-  // must update this entry instead of creating a duplicate.
-  const createdIdRef = useRef<string | null>(null);
+  // must update this entry instead of creating a duplicate. State, not a ref:
+  // the type picker locks once it is set, since an update cannot change
+  // `entry_type`.
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const nextClientKeyRef = useRef(0);
   function nextClientKey(): number {
     return nextClientKeyRef.current++;
@@ -904,7 +906,7 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   useEffect(() => {
     ++seedTokenRef.current;
     ++suggestTokenRef.current;
-    createdIdRef.current = null;
+    setCreatedId(null);
     setFolderSuggestions([]);
     setTagSuggestions([]);
     setSuggested(false);
@@ -1162,7 +1164,6 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
     setSaving(true);
     try {
       let savedId: string;
-      const createdId = createdIdRef.current;
       if (entryId === null && createdId === null) {
         const newEntry: NewEntry = {
           title: form.title.trim(),
@@ -1172,7 +1173,7 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
           fields: buildNewFields(),
         };
         const created = await createEntry(newEntry);
-        createdIdRef.current = created.id;
+        setCreatedId(created.id);
         savedId = created.id;
       } else {
         const targetId = entryId ?? createdId!;
@@ -1258,7 +1259,7 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
           ) : (
             <>
               {entryId === null ? (
-                <EntryTypeSelect value={entryType} onChange={onChangeType} disabled={saving} />
+                <EntryTypeSelect value={entryType} onChange={onChangeType} disabled={saving || createdId !== null} />
               ) : (
                 <div className="kv-editor-type-chip" style={{ color: entryTypeMeta(entryType).color }}>
                   {t(entryTypeMeta(entryType).labelKey)}
