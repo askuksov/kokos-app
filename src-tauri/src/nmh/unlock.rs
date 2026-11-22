@@ -106,6 +106,10 @@ struct Inner {
     /// The most recently raised dialog, open or not.
     latest: Option<Arc<Slot>>,
     epoch: u64,
+    /// Epoch of the last dialog whose send-back-to-tray already ran (0: none).
+    /// An older queued restore that runs later must not hide the window again:
+    /// the user may have opened it in between.
+    restored_epoch: u64,
 }
 
 #[derive(Default)]
@@ -189,22 +193,26 @@ impl UnlockGate {
     /// When a newer dialog was raised meanwhile, the duty passes to it: a
     /// dialog still open (or not yet decided) inherits "was hidden" and
     /// restores the window itself; one already finished decides by its own
-    /// rule. Hiding is never done over an open dialog.
+    /// rule. Hiding is never done over an open dialog, and at most once per
+    /// dialog, whatever order the queued restores run in.
     pub fn claim_restore(&self, slot: &Slot) -> bool {
-        let Ok(g) = self.inner.lock() else {
+        let Ok(mut g) = self.inner.lock() else {
             return false;
         };
         if !slot.restore_pending.swap(false, Ordering::SeqCst) {
             return false;
         }
-        match g.latest.as_ref() {
+        let (hide, epoch) = match g.latest.as_ref() {
             Some(l) if l.epoch != slot.epoch => {
-                if g.current.is_some() || !l.restore_taken.load(Ordering::SeqCst) {
+                let hide = if g.current.is_some() || !l.restore_taken.load(Ordering::SeqCst) {
                     l.was_hidden.store(true, Ordering::SeqCst);
                     false
                 } else if l.restore_pending.load(Ordering::SeqCst) {
                     // The newer dialog's own restore is queued: that one hides,
                     // this one does not, so the window is hidden once.
+                    false
+                } else if g.restored_epoch == l.epoch {
+                    // The newer dialog's restore already ran.
                     false
                 } else {
                     should_rehide(
@@ -212,10 +220,15 @@ impl UnlockGate {
                         l.keep_open.load(Ordering::SeqCst),
                         l.outcome().unwrap_or(Outcome::TimedOut),
                     )
-                }
+                };
+                (hide, l.epoch)
             }
-            _ => g.current.is_none(),
+            _ => (g.current.is_none(), slot.epoch),
+        };
+        if hide {
+            g.restored_epoch = epoch;
         }
+        hide
     }
 
     /// Cancels whatever dialog is open (the window went to the tray, the
@@ -446,6 +459,24 @@ mod tests {
         assert!(g.take_rehide(&b, Outcome::Cancelled));
         assert!(!g.claim_restore(&a), "B's queued restore does it");
         assert!(g.claim_restore(&b));
+    }
+
+    #[test]
+    fn restores_run_newer_first_hide_the_window_once() {
+        let g = UnlockGate::default();
+        let now = Instant::now();
+        let a = slot_of(g.join(false, now));
+        a.set_was_hidden(true);
+        g.resolve(&a.req_id, Outcome::TimedOut, now);
+        assert!(g.take_rehide(&a, Outcome::TimedOut));
+        let b = slot_of(g.join(false, now));
+        b.set_was_hidden(true);
+        g.resolve(&b.req_id, Outcome::Cancelled, now);
+        assert!(g.take_rehide(&b, Outcome::Cancelled));
+        assert!(g.claim_restore(&b));
+        // The user may reopen the window here; A's late restore must not
+        // hide it again.
+        assert!(!g.claim_restore(&a), "B's restore already ran");
     }
 
     #[test]
