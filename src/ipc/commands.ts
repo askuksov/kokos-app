@@ -190,6 +190,8 @@ export const deleteRelation = (relationId: string, vaultId?: string) =>
 
 export const listFieldHistory = (entryId: string, fieldName: string, vaultId?: string) =>
   invoke<HistoryEntry[]>("list_field_history", { entryId, fieldName, vaultId });
+export const revealFieldHistory = (entryId: string, historyId: string, vaultId?: string) =>
+  invoke<string>("reveal_field_history", { entryId, historyId, vaultId });
 export const clearFieldHistory = (entryId: string, fieldName: string, vaultId?: string) =>
   invoke<void>("clear_field_history", { entryId, fieldName, vaultId });
 

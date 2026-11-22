@@ -23,6 +23,7 @@ import {
   listRelations,
   pickSavePath,
   revealField,
+  revealFieldHistory,
   toggleFavorite,
   updateEntry,
 } from "../ipc/commands";
@@ -415,9 +416,15 @@ function HistoryModal({
 }) {
   const t = useT();
   const lang = useLang();
+  const { settings } = useSettings();
   const [rows, setRows] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  // Past values are fetched one at a time on reveal and dropped again on
+  // conceal, after `conceal_seconds`, on window blur and on close.
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const concealTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Bumped whenever reveals are dropped, so a value still in flight is not shown.
+  const concealEpochRef = useRef(0);
   const [confirming, setConfirming] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -463,9 +470,63 @@ function HistoryModal({
     return () => document.removeEventListener("mousedown", onDocMouseDown);
   }, [confirming]);
 
-  function toggleRevealed(id: string) {
-    setRevealed((r) => ({ ...r, [id]: !r[id] }));
+  function concealAll() {
+    concealEpochRef.current += 1;
+    for (const timer of concealTimersRef.current.values()) clearTimeout(timer);
+    concealTimersRef.current.clear();
+    setRevealed({});
   }
+
+  function conceal(id: string) {
+    const timer = concealTimersRef.current.get(id);
+    if (timer !== undefined) clearTimeout(timer);
+    concealTimersRef.current.delete(id);
+    setRevealed((r) => {
+      if (!(id in r)) return r;
+      const next = { ...r };
+      delete next[id];
+      return next;
+    });
+  }
+
+  async function toggleRevealed(id: string) {
+    if (id in revealed) {
+      conceal(id);
+      return;
+    }
+    const epoch = concealEpochRef.current;
+    try {
+      const value = await revealFieldHistory(entryId, id);
+      if (concealEpochRef.current !== epoch) return;
+      setRevealed((r) => ({ ...r, [id]: value }));
+      const seconds = settings.conceal_seconds;
+      if (seconds > 0) {
+        const old = concealTimersRef.current.get(id);
+        if (old !== undefined) clearTimeout(old);
+        concealTimersRef.current.set(id, setTimeout(() => conceal(id), seconds * 1000));
+      }
+    } catch (e) {
+      console.error("reveal_field_history failed:", e);
+    }
+  }
+
+  useEffect(() => {
+    const timers = concealTimersRef.current;
+    return () => {
+      concealEpochRef.current += 1;
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused && settings.conceal_on_blur) concealAll();
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [settings.conceal_on_blur]);
 
   async function onClearClick() {
     if (clearing) return;
@@ -478,7 +539,7 @@ function HistoryModal({
     try {
       await clearFieldHistory(entryId, field.name);
       setRows([]);
-      setRevealed({});
+      concealAll();
     } catch (e) {
       console.error("clear_field_history failed:", e);
     } finally {
@@ -507,14 +568,14 @@ function HistoryModal({
             <p className="kv-relation-empty">{t("detail.noHistoryYet")}</p>
           ) : (
             rows.map((row) => {
-              const shown = !!revealed[row.id];
+              const shown = row.id in revealed;
               const when = formatDate(row.changed_at, lang);
               return (
                 <div key={row.id} className="kv-manage-row">
                   <span className="kv-history-date">{when}</span>
                   <span className="kv-history-value">
                     {shown ? (
-                      <span className="kv-reveal-in">{row.value ?? ""}</span>
+                      <span className="kv-reveal-in">{revealed[row.id]}</span>
                     ) : (
                       <span className="kv-field-mask" aria-label={t("detail.hidden")}>
                         {FIELD_MASK}
@@ -529,12 +590,12 @@ function HistoryModal({
                       shown ? t("detail.concealValueFrom", { when }) : t("detail.revealValueFrom", { when })
                     }
                     aria-pressed={shown}
-                    onClick={() => toggleRevealed(row.id)}
+                    onClick={() => void toggleRevealed(row.id)}
                   >
                     <Icon name={shown ? "eyeOff" : "eye"} />
                   </button>
                   <CopyButton
-                    getValue={() => Promise.resolve(row.value ?? "")}
+                    getValue={() => revealFieldHistory(entryId, row.id)}
                     label={t("detail.fieldFromDate", { name: field.name, when })}
                   />
                 </div>

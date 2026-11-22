@@ -4029,18 +4029,17 @@ pub async fn delete_relation(state: State<'_, AppState>, vault_id: Option<String
 #[derive(Serialize)]
 pub struct HistoryEntryDto {
     pub id: String,
-    pub value: Option<String>,
     pub changed_at: i64,
 }
 
+// Past values are secrets: the list carries only ids and times, and each
+// value is read one at a time through `reveal_field_history`.
 fn to_history_entry_dto(h: kokos_core::entries::HistoryEntry) -> HistoryEntryDto {
-    HistoryEntryDto { id: h.id, value: h.value, changed_at: h.changed_at }
+    HistoryEntryDto { id: h.id, changed_at: h.changed_at }
 }
 
 /// Read-only: borrows the session briefly, no spawn_blocking needed — same
-/// shape as `list_relations`. NOTE: history `value`s ARE plaintext secrets
-/// (same as `reveal_field`); returned only on this explicit user action and
-/// MUST NOT be logged.
+/// shape as `list_relations`.
 #[tauri::command]
 pub fn list_field_history(
     state: State<'_, AppState>,
@@ -4055,6 +4054,24 @@ pub fn list_field_history(
     let items = kokos_core::entries::list_field_history(&v.conn, &entry_id, &field_name)
         .map_err(|e| e.to_string())?;
     Ok(items.into_iter().map(to_history_entry_dto).collect())
+}
+
+/// One past value, on an explicit reveal or copy. Plaintext secret, same as
+/// `reveal_field`: MUST NOT be logged.
+#[tauri::command]
+pub fn reveal_field_history(
+    state: State<'_, AppState>,
+    vault_id: Option<String>,
+    entry_id: String,
+    history_id: String,
+) -> CmdResult<String> {
+    let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
+    let vid = resolve_vault_id(&reg, vault_id.as_deref())?;
+    let s = reg.get_mut(&vid).ok_or_else(|| "no_vault".to_string())?;
+    let v = s.vault.as_ref().ok_or(VaultError::NoVaultOpen.to_string())?;
+    kokos_core::entries::field_history_value(&v.conn, &entry_id, &history_id)
+        .map_err(|e| e.to_string())?
+        .ok_or(VaultError::EntryNotFound.to_string())
 }
 
 /// Same borrow discipline as `delete_relation` — mutation + save together in
