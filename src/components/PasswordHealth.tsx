@@ -66,6 +66,11 @@ export function PasswordHealth({ embedded }: { embedded?: boolean }) {
   const body = (
     <>
       <p className="kv-settings-sub">{t("health.subtitle")}</p>
+      {/* Present from the first render so screen readers hear the scan start,
+          fail or finish; the visible cards below change without live semantics. */}
+      <p className="kv-health-sr" role="status" aria-live="polite">
+        {scanFailed ? t("health.scanFailed") : !report ? t("health.scanning") : ""}
+      </p>
 
       {scanFailed ? (
         <div className="kv-card">

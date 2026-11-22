@@ -19,6 +19,9 @@ export function useSyncStatus(
   const [status, setStatus] = useState<SyncStatusInfo | null>(null);
   const [phase, setPhase] = useState<SyncPhase>("idle");
   const refreshRef = useRef<() => Promise<void>>(async () => {});
+  // Every status read takes a number; only the latest one may write, so an
+  // older answer that lands last cannot turn "Upload pending" back into "Synced".
+  const statusSeq = useRef(0);
 
   useEffect(() => {
     if (!vaultId) {
@@ -30,11 +33,13 @@ export function useSyncStatus(
     setPhase("idle");
     let ignore = false;
     const refresh = async () => {
+      const seq = ++statusSeq.current;
+      const isLatest = () => !ignore && seq === statusSeq.current;
       try {
         const s = await syncStatus(vaultId);
-        if (!ignore) setStatus(s);
+        if (isLatest()) setStatus(s);
       } catch {
-        if (!ignore) setStatus(null);
+        if (isLatest()) setStatus(null);
       }
     };
     refreshRef.current = refresh;
@@ -68,15 +73,19 @@ export function useSyncStatus(
       if (o.requires_reopen) {
         await refreshStatus();
       }
+      const seq = ++statusSeq.current;
       try {
-        setStatus(await syncStatus(vaultId));
+        const s = await syncStatus(vaultId);
+        if (seq === statusSeq.current) setStatus(s);
       } catch {
       }
       setPhase("idle");
     } catch {
       setPhase("error");
+      const seq = ++statusSeq.current;
       try {
-        setStatus(await syncStatus(vaultId));
+        const s = await syncStatus(vaultId);
+        if (seq === statusSeq.current) setStatus(s);
       } catch {
       }
     }
