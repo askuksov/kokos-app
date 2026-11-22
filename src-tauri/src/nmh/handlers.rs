@@ -2177,16 +2177,26 @@ pub fn update_login(
 const MATCH_BUDGET_MAX: u32 = 10;
 const MATCH_BUDGET_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Fixed-window counter behind `MATCH_BUDGET_MAX`, held on `NmhState`.
+/// Most answers about ONE entry in any `ENTRY_MATCH_WINDOW` (sliding). The
+/// global cap alone still lets a page that can script submits test thousands
+/// of guesses a day against the same login; a real user logs in to one site
+/// a couple of times in ten minutes.
+const ENTRY_MATCH_MAX: usize = 3;
+const ENTRY_MATCH_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The two caps behind `login_password_matches`, held on `NmhState`: a
+/// fixed-window global counter and a sliding window per `entry_id`.
 #[derive(Default)]
 pub struct MatchBudget {
     window_start: Option<std::time::Instant>,
     used: u32,
+    per_entry: std::collections::HashMap<String, std::collections::VecDeque<std::time::Instant>>,
 }
 
 impl MatchBudget {
-    /// Spends one check; false once the window's budget is gone.
-    pub fn take(&mut self, now: std::time::Instant) -> bool {
+    /// Spends one check on `entry_id`; false (and nothing spent) when either
+    /// the global window or that entry's window is used up.
+    pub fn take(&mut self, entry_id: &str, now: std::time::Instant) -> bool {
         let expired = match self.window_start {
             None => true,
             Some(s) => now.saturating_duration_since(s) >= MATCH_BUDGET_WINDOW,
@@ -2195,10 +2205,26 @@ impl MatchBudget {
             self.window_start = Some(now);
             self.used = 0;
         }
-        if self.used >= MATCH_BUDGET_MAX {
+        // Forget answers older than the entry window. Bounded: the global cap
+        // admits at most 10 new entries a minute, each gone after ten.
+        self.per_entry.retain(|_, hits| {
+            while hits
+                .front()
+                .is_some_and(|t| now.saturating_duration_since(*t) >= ENTRY_MATCH_WINDOW)
+            {
+                hits.pop_front();
+            }
+            !hits.is_empty()
+        });
+        let entry_used = self.per_entry.get(entry_id).map_or(0, |h| h.len());
+        if self.used >= MATCH_BUDGET_MAX || entry_used >= ENTRY_MATCH_MAX {
             return false;
         }
         self.used += 1;
+        self.per_entry
+            .entry(entry_id.to_string())
+            .or_default()
+            .push_back(now);
         true
     }
 }
@@ -2212,7 +2238,7 @@ impl MatchBudget {
 /// connection or the url, its vault unlocked. No confirmation: the answer is
 /// a single `{ "matches": bool }`, the stored value never leaves core
 /// (`entries::field_value_matches`, constant-time), and `MatchBudget` caps
-/// how many answers any caller can collect.
+/// how many answers any caller can collect, overall and per entry.
 pub fn login_password_matches(
     app: &tauri::AppHandle,
     req: &Request,
@@ -2225,7 +2251,7 @@ pub fn login_password_matches(
 
     let st = app.state::<crate::state::AppState>();
     let allowed = match st.nmh.match_budget.lock() {
-        Ok(mut b) => b.take(std::time::Instant::now()),
+        Ok(mut b) => b.take(&args.entry_id, std::time::Instant::now()),
         Err(_) => false,
     };
     if !allowed {
@@ -2280,18 +2306,81 @@ mod tests {
     fn match_budget_caps_checks_per_window_and_refills() {
         let t0 = std::time::Instant::now();
         let mut b = MatchBudget::default();
+        // Distinct entries, so only the global cap is in play.
         for i in 0..MATCH_BUDGET_MAX {
-            assert!(b.take(t0), "check {i} is within the budget");
+            assert!(
+                b.take(&format!("e{i}"), t0),
+                "check {i} is within the budget"
+            );
         }
-        assert!(!b.take(t0), "one past the budget is refused");
+        assert!(!b.take("fresh", t0), "one past the budget is refused");
         assert!(
-            !b.take(t0 + MATCH_BUDGET_WINDOW - std::time::Duration::from_millis(1)),
+            !b.take(
+                "fresh",
+                t0 + MATCH_BUDGET_WINDOW - std::time::Duration::from_millis(1)
+            ),
             "still refused until the window ends"
         );
         assert!(
-            b.take(t0 + MATCH_BUDGET_WINDOW),
+            b.take("fresh", t0 + MATCH_BUDGET_WINDOW),
             "a new window refills the budget"
         );
+    }
+
+    #[test]
+    fn match_budget_caps_checks_per_entry_over_a_sliding_window() {
+        let t0 = std::time::Instant::now();
+        let min = std::time::Duration::from_secs(60);
+        let mut b = MatchBudget::default();
+        // Spread over several global windows, so only the entry cap is in play.
+        for i in 0..ENTRY_MATCH_MAX as u32 {
+            assert!(b.take("e1", t0 + min * 2 * i), "check {i} on e1 is allowed");
+        }
+        let last = t0 + min * 2 * (ENTRY_MATCH_MAX as u32 - 1);
+        assert!(
+            !b.take("e1", last + min * 2),
+            "one past the entry cap is refused"
+        );
+        assert!(
+            b.take("e2", last + min * 2),
+            "another entry has its own budget"
+        );
+        assert!(
+            !b.take(
+                "e1",
+                t0 + ENTRY_MATCH_WINDOW - std::time::Duration::from_millis(1)
+            ),
+            "the oldest answer still counts until the window has passed"
+        );
+        assert!(
+            b.take("e1", t0 + ENTRY_MATCH_WINDOW),
+            "the oldest answer aging out frees one slot"
+        );
+        assert!(
+            !b.take("e1", t0 + ENTRY_MATCH_WINDOW),
+            "and only one: the later answers still count"
+        );
+    }
+
+    #[test]
+    fn match_budget_spends_nothing_on_a_refusal() {
+        let t0 = std::time::Instant::now();
+        let mut b = MatchBudget::default();
+        for _ in 0..ENTRY_MATCH_MAX {
+            assert!(b.take("e1", t0));
+        }
+        for _ in 0..MATCH_BUDGET_MAX {
+            assert!(!b.take("e1", t0), "refused on the entry cap");
+        }
+        // The refusals above did not eat the global budget.
+        let left = MATCH_BUDGET_MAX - ENTRY_MATCH_MAX as u32;
+        for i in 0..left {
+            assert!(
+                b.take(&format!("x{i}"), t0),
+                "global check {i} still available"
+            );
+        }
+        assert!(!b.take("y", t0), "now the global cap is reached");
     }
 
     #[test]

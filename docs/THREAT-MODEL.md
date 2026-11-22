@@ -173,11 +173,20 @@ and the access-control primitives it can use differ.
   anchored to the connection or the url, vault unlocked) but no confirmation
   dialog. The stored value never leaves `kokos-core`
   (`entries::field_value_matches`: constant-time compare, value wiped
-  afterwards). Since a yes/no answer is still a guessing oracle, the app gives
-  at most 10 answers per minute across all connections (`handlers::MatchBudget`)
-  and audits refusals as `extension_denied`. In the extension only the
-  background's save flow sends it, for a password just submitted on that site;
-  the page-facing request bridge refuses the action.
+  afterwards). The yes/no answer is still a guessing oracle, and not only for
+  a hostile extension: the extension captures scripted form submits too, and
+  a page can tell a match (no save prompt) from a mismatch (the prompt or its
+  in-page hint appears), so a script on the site (XSS, a hostile page) can
+  test guesses for the login of that site. Caps, as defence in depth
+  (`handlers::MatchBudget`): at most 10 answers per minute across all
+  connections, and at most 3 answers per entry in any 10 minutes; refusals
+  answer `denied` and are audited as `extension_denied`. The extension adds
+  its own cap of 3 checks per site per 10 minutes and, past it, skips the
+  check and offers Update as before, so an exhausted budget gives the page no
+  extra signal. Residual: about 3 guesses per login per 10 minutes (~430 a
+  day) for a page script, which stops only weak, guessable passwords from
+  being confirmed; the check is never offered by the page-facing request
+  bridge, only by the background's save flow.
 - Unlock requests: when every open vault is locked, `request_unlock`
   (`handlers::request_unlock`) brings the window forward with an unlock
   dialog. The master password, Touch ID and the saved password are used in
@@ -406,7 +415,7 @@ consumers.
 | Keychain re-prompt / ACL | macOS platform | High (dev builds) / low (annoyance, not a break) | Keychain ACL is pinned to the binary's code signature (see boundary 7); a stable code-signing identity for release builds avoids the re-prompt | Mitigated (dev-mode limitation documented, not fixed) |
 | Vaults left unlocked in a background process | N/A (app lifecycle) | Medium / medium | Closing the window to the tray locks every vault by default (`lock_on_close`); idle auto-lock and lock-on-sleep keep running while the window is hidden, and a hidden window produces no input that would reset the idle timer | Accepted residual (when the user turns `lock_on_close` off) |
 | Extension raising the unlock dialog over and over (focus stealing / password-prompt fatigue) | NMH | Low / low (annoyance; the password is never typed outside the app) | User-action-only and enabled-site-only on the extension side; one dialog at a time and a 30 s refusal after Cancel in the app (`nmh/unlock.rs`) | Mitigated |
-| Guessing a stored password through the match check | NMH | Low / medium (a whitelisted caller learns one yes/no per guess) | Anchored entry and unlocked vault required; 10 answers per minute across all connections, refusals audited; not reachable from the extension's page-facing bridge | Mitigated (rate-limited) |
+| Guessing a stored password through the match check | NMH | Low / medium (one yes/no per guess, for the login of the site the guesses are typed on; a page script can drive it through scripted submits) | Anchored entry and unlocked vault required; app caps of 10 answers per minute overall and 3 per entry per 10 minutes, refusals audited; extension cap of 3 checks per site per 10 minutes with a fallback that looks the same to the page; not reachable from the extension's page-facing bridge | Accepted residual (rate-limited: ~430 guesses per login per day) |
 | UDS peer-auth gap | NMH | Low / low (same-user access already compromises the vault) | `getpeereid(2)` same-uid gate + rotating shared-secret token in `Hello`; both defense-in-depth over the `0600` socket — see below | Mitigated (defense-in-depth) |
 
 ## Accepted / deferred risks
