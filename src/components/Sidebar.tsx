@@ -188,11 +188,19 @@ export function Sidebar() {
     };
   }, [filterOpen]);
 
+  // Every delete, restore, permanent delete and empty is followed by an entry
+  // reload, so a new `entries` list is the cue to recount the bin as well.
   useEffect(() => {
+    let cancelled = false;
     listTrash(vaultId)
-      .then((items) => setTrashCount(items.length))
+      .then((items) => {
+        if (!cancelled) setTrashCount(items.length);
+      })
       .catch((e) => console.error("list_trash failed:", e));
-  }, [route, vaultId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [route, vaultId, entries]);
 
   const [viewCounts, setViewCounts] = useState<Record<View, number>>({
     all: 0,
