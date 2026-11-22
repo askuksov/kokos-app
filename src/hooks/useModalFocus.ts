@@ -50,6 +50,12 @@ export type ModalFocusOptions = {
    * dialog replaced the view it was opened from).
    */
   fallbackFocus?: () => HTMLElement | null;
+  /**
+   * Pull focus back when something outside takes it (an autoFocus control
+   * mounting behind the dialog). Default true; off for a dialog that leaves
+   * the rest of the window clickable.
+   */
+  holdFocus?: boolean;
 };
 
 /**
@@ -58,7 +64,7 @@ export type ModalFocusOptions = {
  * element is still on the page and focus has not moved elsewhere meanwhile.
  */
 export function useModalFocus(ref: RefObject<HTMLElement | null>, options: ModalFocusOptions = {}): void {
-  const { open = true, initialFocus, blocked, fallbackFocus } = options;
+  const { open = true, initialFocus, blocked, fallbackFocus, holdFocus = true } = options;
   const initialRef = useRef(initialFocus);
   initialRef.current = initialFocus;
   const blockedRef = useRef(blocked);
@@ -106,8 +112,28 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, options: Modal
     }
     document.addEventListener("keydown", onKeyDown, true);
 
+    // Focus taken by something outside while this dialog is on top goes back
+    // to where it was inside. Another modal layer (the tray intro, the unlock
+    // prompt) is left alone: it owns the keyboard while it is open.
+    let lastInside: HTMLElement | null = node.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+    function onFocusIn(ev: FocusEvent) {
+      const target = ev.target;
+      if (!(target instanceof Element)) return;
+      if (node!.contains(target)) {
+        if (target instanceof HTMLElement) lastInside = target;
+        return;
+      }
+      if (!holdFocus || stack[stack.length - 1] !== node || !node!.isConnected) return;
+      if (blockedRef.current?.()) return;
+      if (target.closest('[aria-modal="true"]')) return;
+      const back = lastInside && lastInside.isConnected && node!.contains(lastInside) ? lastInside : (focusables(node!)[0] ?? node!);
+      back.focus({ preventScroll: true });
+    }
+    document.addEventListener("focusin", onFocusIn, true);
+
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("focusin", onFocusIn, true);
       const at = stack.lastIndexOf(node);
       if (at >= 0) stack.splice(at, 1);
       // By now the dialog may already be detached; focus left inside it (or
@@ -121,5 +147,5 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, options: Modal
         fallbackRef.current?.()?.focus({ preventScroll: true });
       }
     };
-  }, [open, ref]);
+  }, [open, ref, holdFocus]);
 }
