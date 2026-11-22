@@ -320,6 +320,7 @@ export function EntryList({ onNewEntry }: { onNewEntry: () => void }) {
           className="kv-btn is-icon"
           title={t("list.newEntry")}
           aria-label={t("list.newEntry")}
+          data-new-entry
           onClick={onNewEntry}
         >
           <Icon name="plus" size={14} />
