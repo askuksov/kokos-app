@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useVault } from "../state/VaultContext";
 import { useSettings } from "../state/SettingsContext";
@@ -62,6 +62,7 @@ import {
 } from "../ipc/commands";
 import { MAX_HINT_BYTES, type AuditEntry, type ImportReport, type SyncStatusInfo, type AiStatus, type AiIndexStatus, type GenModelStatus } from "../ipc/types";
 import { PasswordField } from "./PasswordField";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { KeyfileField } from "./KeyfileField";
 import { ManageFieldTemplates } from "./ManageFieldTemplates";
 import { PasswordHealth } from "./PasswordHealth";
@@ -323,6 +324,9 @@ export function Settings() {
 
   const [kdbxPath, setKdbxPath] = useState<string | null>(null);
   const [kdbxPassword, setKdbxPassword] = useState("");
+  const kdbxDialogRef = useRef<HTMLFormElement>(null);
+  const kdbxTitleId = useId();
+  useModalFocus(kdbxDialogRef, { open: kdbxPath != null });
   const [kdbxBusy, setKdbxBusy] = useState(false);
   const [kdbxErr, setKdbxErr] = useState<string | null>(null);
 
@@ -2662,9 +2666,12 @@ export function Settings() {
           }}
         >
           <form
+            ref={kdbxDialogRef}
             className="kv-modal kv-kdbx-modal"
             role="dialog"
             aria-modal="true"
+            aria-labelledby={kdbxTitleId}
+            tabIndex={-1}
             onMouseDown={(e) => e.stopPropagation()}
             onSubmit={(e) => {
               e.preventDefault();
@@ -2672,7 +2679,7 @@ export function Settings() {
             }}
           >
             <div className="kv-modal-header">
-              <h2>{t("settings.kdbxModalTitle")}</h2>
+              <h2 id={kdbxTitleId}>{t("settings.kdbxModalTitle")}</h2>
             </div>
             <div className="kv-modal-body">
               <p className="kv-settings-row-hint">{t("settings.kdbxModalHint")}</p>

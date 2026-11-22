@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { restoreSignin, restoreDownload, restoreBind, restoreCancel, pickSavePath, openVault } from "../ipc/commands";
 import type { RestoreFile } from "../ipc/types";
 import { useT } from "../state/LangContext";
+import { useModalFocus } from "../hooks/useModalFocus";
 import { useVault } from "../state/VaultContext";
 import { PasswordField } from "../components/PasswordField";
 import { formatBytes, restoreBackupLabel } from "../lib/format";
@@ -37,6 +38,8 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
   const t = useT();
   const { refreshStatus } = useVault();
   const headerId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef);
   const [step, setStep] = useState<Step>("signin");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,10 +127,12 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
   return (
     <div className="kv-modal-scrim" onClick={cancel}>
       <div
+        ref={dialogRef}
         className="kv-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby={headerId}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="kv-modal-header">

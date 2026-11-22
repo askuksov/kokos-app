@@ -14,6 +14,20 @@ const FOCUSABLE = [
 // keyboard until it closes.
 const stack: HTMLElement[] = [];
 
+// The last focus move: where it went and where it came from. A control with
+// autoFocus inside a dialog takes focus while React mounts it, before the
+// hook's effect runs, so the element to return to is read from here then.
+let lastMove: { to: EventTarget | null; from: EventTarget | null } = { to: null, from: null };
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "focusin",
+    (ev) => {
+      lastMove = { to: ev.target, from: ev.relatedTarget };
+    },
+    true,
+  );
+}
+
 function focusables(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
     (el) => el.tabIndex >= 0 && el.getClientRects().length > 0,
@@ -31,6 +45,11 @@ export type ModalFocusOptions = {
   initialFocus?: RefObject<HTMLElement | null> | false;
   /** While true the hook leaves Tab alone (another layer owns the keyboard). */
   blocked?: () => boolean;
+  /**
+   * Where focus goes on close when the element it came from is gone (the
+   * dialog replaced the view it was opened from).
+   */
+  fallbackFocus?: () => HTMLElement | null;
 };
 
 /**
@@ -39,21 +58,32 @@ export type ModalFocusOptions = {
  * element is still on the page and focus has not moved elsewhere meanwhile.
  */
 export function useModalFocus(ref: RefObject<HTMLElement | null>, options: ModalFocusOptions = {}): void {
-  const { open = true, initialFocus, blocked } = options;
+  const { open = true, initialFocus, blocked, fallbackFocus } = options;
   const initialRef = useRef(initialFocus);
   initialRef.current = initialFocus;
   const blockedRef = useRef(blocked);
   blockedRef.current = blocked;
+  const fallbackRef = useRef(fallbackFocus);
+  fallbackRef.current = fallbackFocus;
+  // The control that autoFocus picked, kept for StrictMode's second effect
+  // run, which starts after the first cleanup has already moved focus out.
+  const autoFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const node = ref.current;
     if (!open || !node) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    let previous: Element | null = document.activeElement;
+    if (previous && node.contains(previous)) {
+      if (previous instanceof HTMLElement) autoFocusedRef.current = previous;
+      previous = lastMove.to === previous && lastMove.from instanceof Element ? lastMove.from : null;
+      if (previous && node.contains(previous)) previous = null;
+    }
     stack.push(node);
 
     const initial = initialRef.current;
     if (initial !== false && !node.contains(document.activeElement)) {
-      const target = initial?.current ?? focusables(node)[0] ?? node;
+      const auto = autoFocusedRef.current;
+      const target = initial?.current ?? (auto && node.contains(auto) ? auto : null) ?? focusables(node)[0] ?? node;
       target.focus({ preventScroll: true });
     }
 
@@ -84,8 +114,11 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, options: Modal
       // dropped to <body>) goes back to where it came from.
       const active = document.activeElement;
       const lost = !active || active === document.body || node.contains(active);
-      if (lost && previous && previous !== document.body && previous.isConnected) {
+      if (!lost) return;
+      if (previous instanceof HTMLElement && previous !== document.body && previous.isConnected) {
         previous.focus({ preventScroll: true });
+      } else {
+        fallbackRef.current?.()?.focus({ preventScroll: true });
       }
     };
   }, [open, ref]);
