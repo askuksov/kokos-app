@@ -255,9 +255,10 @@ export function NmhConfirm() {
           )}
           {isRead && req.mode === "remember_site" && (
             <>
-              <label className="kv-nmh-remember">
+              {/* Keyed with the label: a held press on the old prompt's label
+                  must not toggle the new request's checkbox. */}
+              <label key={req.req_id} className="kv-nmh-remember">
                 <input
-                  key={req.req_id}
                   type="checkbox"
                   checked={remember}
                   disabled={!armed}

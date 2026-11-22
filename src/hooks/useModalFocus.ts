@@ -125,7 +125,10 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, options: Modal
       }
       if (!holdFocus || stack[stack.length - 1] !== node || !node!.isConnected) return;
       if (blockedRef.current?.()) return;
-      if (target.closest('[aria-modal="true"]')) return;
+      // Only layers outside this stack (tray intro, unlock prompt) keep focus;
+      // a dialog lower in the stack (the editor behind a confirmation) does not.
+      const layer = target.closest('[aria-modal="true"]');
+      if (layer && !stack.includes(layer as HTMLElement)) return;
       const back = lastInside && lastInside.isConnected && node!.contains(lastInside) ? lastInside : (focusables(node!)[0] ?? node!);
       back.focus({ preventScroll: true });
     }
