@@ -70,7 +70,8 @@ export function TrayIntro() {
     prevFocusRef.current = null;
     // An extension confirmation that arrived meanwhile waits underneath with
     // no focus; it gets it now, on its safe default (Deny).
-    const pendingConfirm = document.querySelector<HTMLButtonElement>(".kv-nmh-scrim .kv-modal-footer .is-primary");
+    // Picked by a role attribute, never by styling: the accent sits on Allow.
+    const pendingConfirm = document.querySelector<HTMLButtonElement>(".kv-nmh-scrim [data-nmh-deny]");
     if (pendingConfirm) pendingConfirm.focus({ preventScroll: true });
     else if (prev && prev.isConnected) prev.focus({ preventScroll: true });
   }
