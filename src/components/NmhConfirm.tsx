@@ -282,7 +282,7 @@ export function NmhConfirm() {
         <div className="kv-modal-footer">
           {/* Allow carries the accent; focus stays on Deny, so Enter or Space on
               a prompt that appeared mid-typing still denies. */}
-          <button type="button" className="kv-btn is-ghost" ref={denyRef} onClick={() => close(false, req.req_id)}>
+          <button type="button" className="kv-btn is-ghost" data-nmh-deny="" ref={denyRef} onClick={() => close(false, req.req_id)}>
             {t("nmh.deny")}
           </button>
           {/* Keyed by request: a replacement mounts a new button, so a press
