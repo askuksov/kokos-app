@@ -15,6 +15,7 @@ import { SyncReopenBanner } from "../components/SyncReopenBanner";
 import { TextImportReview } from "../components/TextImportReview";
 import { ImportDoneToast } from "../components/ImportDoneToast";
 import { DiscardChangesConfirm } from "../components/DiscardChangesConfirm";
+import { RestoreBindNotice } from "../components/RestoreBindNotice";
 import { useVault } from "../state/VaultContext";
 import { useSettings } from "../state/SettingsContext";
 import { useTextImport } from "../state/TextImportContext";
@@ -230,6 +231,7 @@ export function VaultScreen() {
       )}
       {lastReport && <ImportDoneToast report={lastReport} onDismiss={dismissToast} />}
       <ClipboardPill />
+      <RestoreBindNotice />
       {discardAsk && (
         <DiscardChangesConfirm
           onCancel={() => setDiscardAsk(null)}

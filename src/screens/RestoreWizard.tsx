@@ -1,10 +1,22 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { restoreSignin, restoreDownload, restoreBind, restoreCancel, pickSavePath, openVault } from "../ipc/commands";
+import {
+  restoreSignin,
+  restoreDownload,
+  restoreBind,
+  restoreCancel,
+  pickSavePath,
+  openVault,
+  getVaultHeaderInfo,
+  pickAnyFile,
+} from "../ipc/commands";
 import type { RestoreFile } from "../ipc/types";
 import { useT } from "../state/LangContext";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { useVault } from "../state/VaultContext";
 import { PasswordField } from "../components/PasswordField";
+import { KeyfileField } from "../components/KeyfileField";
+import { errorMessage } from "../lib/errors";
+import { reportRestoreBindFailure } from "../lib/restoreBindNotice";
 import { formatBytes, restoreBackupLabel } from "../lib/format";
 import "./RestoreWizard.css";
 
@@ -33,6 +45,10 @@ type Step = "signin" | "pick" | "unlock";
  * a vault: `restoreDownload` already fetched the latest bytes from Drive, and
  * `restoreBind` (not `detect_remote_changes`) is what binds `sync.json` to
  * this vault — reconciling here would run against a not-yet-bound target.
+ *
+ * Opening the vault swaps the welcome screen (and this wizard) for the vault
+ * screen before `restoreBind` answers, so a binding failure is handed to
+ * `RestoreBindNotice` there instead of this dialog's own error line.
  */
 export function RestoreWizard({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -46,6 +62,31 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
   const [files, setFiles] = useState<RestoreFile[]>([]);
   const [dest, setDest] = useState<string | null>(null);
   const [password, setPassword] = useState("");
+  const [requiresKeyfile, setRequiresKeyfile] = useState(false);
+  const [keyfile, setKeyfile] = useState<string | null>(null);
+
+  // Same probe as Welcome's open flow: a key-file vault shows a picker.
+  useEffect(() => {
+    setRequiresKeyfile(false);
+    setKeyfile(null);
+    if (!dest) return;
+    let ignore = false;
+    getVaultHeaderInfo(dest)
+      .then((h) => {
+        if (!ignore) setRequiresKeyfile(h.requires_keyfile);
+      })
+      .catch((err) => {
+        if (!ignore) setError(errorMessage(err, t));
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [dest, t]);
+
+  async function pickKeyfile() {
+    const p = await pickAnyFile();
+    if (p) setKeyfile(p);
+  }
 
   async function cancel() {
     try {
@@ -105,9 +146,9 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await openVault(dest, password, null);
+      await openVault(dest, password, requiresKeyfile ? keyfile : null);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e, t));
       setBusy(false);
       return;
     }
@@ -116,6 +157,7 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
         await restoreBind();
       } catch (e) {
         console.error("restore: sync bind failed", e);
+        reportRestoreBindFailure(errorMessage(e, t));
       }
       await refreshStatus();
     } catch (e) {
@@ -191,6 +233,7 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
           {step === "unlock" && (
             <form className="kv-restore-step" onSubmit={doUnlock}>
               <p className="kv-restore-blurb">{t("restore.unlockBlurb")}</p>
+              {requiresKeyfile && <p className="kv-restore-blurb">{t("restore.needsKeyfile")}</p>}
               <PasswordField
                 value={password}
                 onChange={setPassword}
@@ -199,7 +242,20 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
                 autoComplete="current-password"
                 disabled={busy}
               />
-              <button type="submit" className="kv-btn is-primary is-lg is-block" disabled={busy || !password}>
+              {requiresKeyfile && (
+                <KeyfileField
+                  value={keyfile}
+                  onPick={() => void pickKeyfile()}
+                  onClear={() => setKeyfile(null)}
+                  disabled={busy}
+                  pickClassName="kv-btn is-lg is-block"
+                />
+              )}
+              <button
+                type="submit"
+                className="kv-btn is-primary is-lg is-block"
+                disabled={busy || !password || (requiresKeyfile && keyfile === null)}
+              >
                 {t("restore.unlockButton")}
               </button>
             </form>
