@@ -41,11 +41,11 @@ fn is_whole(source: &str, cand: Span) -> bool {
     !before.is_some_and(continues_token) && !after.is_some_and(continues_token)
 }
 
-/// Find the first occurrence of `needle` within `region` that is a whole token
-/// and does not overlap an already-consumed span. `region` is char-aligned (a
-/// block or the chunk window), so the returned span is char-aligned. Returns
-/// `None` for an empty needle or no free occurrence.
-fn find_in(source: &str, needle: &str, region: Span, consumed: &[Span]) -> Option<Span> {
+/// Find the first occurrence of `needle` within `region` that is a whole token,
+/// starts before `max_start`, and does not overlap an already-consumed span.
+/// `region` is char-aligned (a block or the chunk window), so the returned span
+/// is char-aligned. Returns `None` for an empty needle or no free occurrence.
+fn find_in(source: &str, needle: &str, region: Span, max_start: usize, consumed: &[Span]) -> Option<Span> {
     if needle.is_empty() || region.end > source.len() || region.start > region.end {
         return None;
     }
@@ -53,6 +53,9 @@ fn find_in(source: &str, needle: &str, region: Span, consumed: &[Span]) -> Optio
     let mut from = 0usize;
     while let Some(rel) = hay[from..].find(needle) {
         let start = region.start + from + rel;
+        if start >= max_start {
+            break;
+        }
         let cand = Span { start, end: start + needle.len() };
         if is_whole(source, cand) && !consumed.iter().any(|c| overlaps(*c, cand)) {
             return Some(cand);
@@ -95,31 +98,27 @@ pub fn locate(ctx: &LocateCtx, drafts: &[RawEntryDraft]) -> Vec<RawEntry> {
     for draft in drafts {
         let mut fields: Vec<(usize, RawField)> = Vec::new();
         let anchor = anchor_index(draft);
-
-        let region = match anchor {
-            Some(ai) => {
-                let a = &draft.fields[ai];
-                match find_in(ctx.source, &a.verbatim_text, ctx.window, &consumed) {
-                    Some(sp) => {
-                        consumed.push(sp);
-                        fields.push((ai, located_field(a, sp)));
-                        block_of(ctx.blocks, sp.start).unwrap_or(ctx.window)
-                    }
-                    None => ctx.window,
-                }
-            }
-            None => ctx.window,
-        };
-
-        for (i, f) in draft.fields.iter().enumerate() {
-            if Some(i) == anchor {
-                continue;
-            }
-            let span = find_in(ctx.source, &f.verbatim_text, region, &consumed)
-                .or_else(|| find_in(ctx.source, &f.verbatim_text, ctx.window, &consumed));
+        // The block is the unit of an entry: the first field found (the anchor
+        // when it is locatable) binds the draft to its block, and every later
+        // field must start inside that block. A field the model took from
+        // another block is dropped, never bound (a URL from the next block
+        // would otherwise pair a site with someone else's login).
+        let mut block: Option<Span> = None;
+        let order = anchor.into_iter().chain((0..draft.fields.len()).filter(|i| Some(*i) != anchor));
+        for i in order {
+            let f = &draft.fields[i];
+            // A value may run past its block's end (a note with a blank line),
+            // but it has to start inside the block.
+            let span = match block {
+                Some(b) => find_in(ctx.source, &f.verbatim_text, Span { start: b.start, end: ctx.window.end }, b.end, &consumed),
+                None => find_in(ctx.source, &f.verbatim_text, ctx.window, ctx.window.end, &consumed),
+            };
             if let Some(sp) = span {
                 consumed.push(sp);
                 fields.push((i, located_field(f, sp)));
+                if block.is_none() {
+                    block = Some(block_of(ctx.blocks, sp.start).unwrap_or(sp));
+                }
             }
         }
 
@@ -260,6 +259,52 @@ mod tests {
         let entries = locate(&ctx, &[a, b]);
         assert_eq!(entries.len(), 1, "got {entries:?}");
         assert_eq!(block_of(&blocks, entries[0].fields[0].span.start), Some(blocks[0]));
+    }
+
+    /// A draft that mixes two blocks keeps only the fields of the block its
+    /// first located field sits in; the other block's fields stay unbound.
+    #[test]
+    fn fields_from_another_block_are_not_bound_to_the_entry() {
+        let src = "site: https://a.com\nuser: alice\n\nsite: https://b.com\nuser: bob\npass: b-secret";
+        let blocks = split_blocks(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let d = draft(
+            EntryKind::Login,
+            &[(FieldType::Url, "https://a.com"), (FieldType::Login, "bob"), (FieldType::Password, "b-secret"), (FieldType::Login, "alice")],
+        );
+        let entries = locate(&ctx, &[d]);
+        assert_eq!(entries.len(), 1);
+        let vals: Vec<&str> = entries[0].fields.iter().map(|f| &src[f.span.start..f.span.end]).collect();
+        assert_eq!(vals, ["https://a.com", "alice"], "got {vals:?}");
+        assert!(entries[0].fields.iter().all(|f| block_of(&blocks, f.span.start) == Some(blocks[0])));
+    }
+
+    /// Without a locatable anchor the first field found binds the block.
+    #[test]
+    fn unlocatable_anchor_binds_to_the_first_found_field_block() {
+        let src = "user: alice\npass: a-secret\n\nsite: https://b.com\nuser: bob";
+        let blocks = split_blocks(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let d = draft(
+            EntryKind::Login,
+            &[(FieldType::Url, "https://ghost.example"), (FieldType::Password, "a-secret"), (FieldType::Login, "bob")],
+        );
+        let entries = locate(&ctx, &[d]);
+        assert_eq!(entries.len(), 1);
+        let vals: Vec<&str> = entries[0].fields.iter().map(|f| &src[f.span.start..f.span.end]).collect();
+        assert_eq!(vals, ["a-secret"], "got {vals:?}");
+    }
+
+    /// A multi-line value may run past its block's blank line as long as it
+    /// starts inside the entry's block.
+    #[test]
+    fn value_starting_in_the_block_may_cross_a_blank_line() {
+        let src = "site: https://a.com\nnote: line one\n\nline two";
+        let blocks = split_blocks(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let d = draft(EntryKind::Login, &[(FieldType::Url, "https://a.com"), (FieldType::Note, "line one\n\nline two")]);
+        let entries = locate(&ctx, &[d]);
+        assert_eq!(entries[0].fields.len(), 2);
     }
 
     #[test]
