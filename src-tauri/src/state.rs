@@ -30,6 +30,9 @@ pub struct SealedImport {
 pub struct AppState {
     pub sessions: Mutex<SessionRegistry>,
     pub allowed_paths: Mutex<HashSet<PathBuf>>,
+    /// Write destinations handed out by `pick_save_path`, each consumed by
+    /// the one write it was picked for (`commands::ensure_write_target`).
+    pub write_targets: Mutex<HashSet<PathBuf>>,
     pub settings: Mutex<crate::settings::Settings>,
     pub last_activity: Mutex<std::time::Instant>,
     pub pending_open: Mutex<Option<PathBuf>>,
@@ -96,6 +99,7 @@ impl AppState {
         Self {
             sessions: Mutex::new(SessionRegistry::new()),
             allowed_paths: Mutex::new(HashSet::new()),
+            write_targets: Mutex::new(HashSet::new()),
             settings: Mutex::new(crate::settings::Settings::default()),
             last_activity: Mutex::new(std::time::Instant::now()),
             pending_open: Mutex::new(None),

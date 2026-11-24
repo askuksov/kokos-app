@@ -1362,21 +1362,16 @@ pub fn recent_files(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdRes
 }
 
 /// True when `path` names a vault the app already knows -- an open or locked
-/// tab, or an entry in the recent-files list. Export destinations must never
-/// be one: `recent_files` adds every recent vault to the shared path
-/// allowlist (for opening), so without this check a caller could pass another
-/// vault's file as an export destination and have it truncated or replaced.
+/// tab (open, or remembered locked: restored at launch and not unlocked yet,
+/// or listed in the persisted `open_vaults`/`active_vault`), or an entry in
+/// the recent-files list. Write destinations (exports, attachment downloads,
+/// Drive restore) must never be one: the user can pick a vault file in the
+/// save dialog, and writing there would replace the vault, or be overwritten
+/// by the next save of a session still holding it in memory.
 /// Fails closed: a destination that cannot be resolved counts as known.
 fn is_known_vault_path(app: &tauri::AppHandle, state: &AppState, path: &str) -> bool {
     use tauri::Manager;
-    let Ok(dest) = crate::paths::normalise(std::path::Path::new(path)) else {
-        return true;
-    };
-    let mut known: Vec<String> = state
-        .sessions
-        .lock()
-        .map(|reg| reg.open_paths())
-        .unwrap_or_default();
+    let mut known = tab_vault_paths(state);
     if let Ok(dir) = app.path().app_config_dir() {
         if let Ok(raw) = std::fs::read_to_string(dir.join("recent.json")) {
             if let Ok(items) = serde_json::from_str::<Vec<RecentFileRaw>>(&raw) {
@@ -1384,11 +1379,53 @@ fn is_known_vault_path(app: &tauri::AppHandle, state: &AppState, path: &str) -> 
             }
         }
     }
+    path_matches_any(path, &known)
+}
+
+/// Vault paths of every tab: registry sessions (open or locked), tabs restored
+/// locked at launch, and the persisted tab list.
+fn tab_vault_paths(state: &AppState) -> Vec<String> {
+    let mut known: Vec<String> = state
+        .sessions
+        .lock()
+        .map(|reg| reg.open_paths())
+        .unwrap_or_default();
+    if let Ok(restored) = state.restored_locked.lock() {
+        known.extend(restored.iter().cloned());
+    }
+    if let Ok(settings) = state.settings.lock() {
+        known.extend(settings.open_vaults.iter().cloned());
+        known.extend(settings.active_vault.iter().cloned());
+    }
+    known
+}
+
+/// Canonical comparison of `path` against `known`; an unresolvable `path`
+/// counts as a match (fail closed).
+fn path_matches_any(path: &str, known: &[String]) -> bool {
+    let Ok(dest) = crate::paths::normalise(std::path::Path::new(path)) else {
+        return true;
+    };
     known.iter().any(|p| {
         crate::paths::normalise(std::path::Path::new(p))
             .map(|c| c == dest)
             .unwrap_or(false)
     })
+}
+
+/// Gate for a command that writes a file at a WebView-supplied path: the path
+/// must come from a `pick_save_path` dialog (one pick, one write) and must not
+/// be a known vault file. The general `allowed_paths` set is not enough: it
+/// also holds vaults from recent files and files picked for reading, such as
+/// key files and attachment sources, none of which may be overwritten.
+fn ensure_write_target(app: &tauri::AppHandle, state: &AppState, path: &str) -> CmdResult<()> {
+    if !crate::paths::take(&state.write_targets, path) {
+        return Err(VaultError::PathNotAllowed.to_string());
+    }
+    if is_known_vault_path(app, state, path) {
+        return Err(VaultError::AlreadyExists.to_string());
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -3511,16 +3548,20 @@ pub async fn upload_attachment(
     Ok(to_attachment_meta_dto(result.map_err(|e| e.to_string())?))
 }
 
-/// Allowlist-gated like `get_vault_header_info` — see its doc comment. Reads
+/// Destination gated by `ensure_write_target`. Reads
 /// the bytes out under a brief read-only session lock, then releases it
 /// before writing to disk in `spawn_blocking`, so the write's I/O never holds
 /// up another command that needs the session lock. No vault save — reading
 /// an attachment doesn't mutate the vault.
 #[tauri::command]
-pub async fn download_attachment(state: State<'_, AppState>, vault_id: Option<String>, id: String, path: String) -> CmdResult<()> {
-    if !crate::paths::is_allowed(&state.allowed_paths, &path) {
-        return Err(VaultError::PathNotAllowed.to_string());
-    }
+pub async fn download_attachment(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    vault_id: Option<String>,
+    id: String,
+    path: String,
+) -> CmdResult<()> {
+    ensure_write_target(&app, &state, &path)?;
     let data = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         let rid = resolve_vault_id(&reg, vault_id.as_deref())?;
@@ -3638,15 +3679,17 @@ pub async fn pick_folder(state: State<'_, AppState>) -> CmdResult<Option<String>
     Ok(Some(raw))
 }
 
-/// Save-file picker for `download_attachment`'s destination, defaulting the
-/// file name to the attachment's own filename. Adds the chosen path to the
-/// allowlist so the following `download_attachment` call accepts it.
+/// Save-file picker for a write destination (attachment download, exports,
+/// Drive restore), seeded with `default_name`. Adds the chosen path to the
+/// one-shot `write_targets` set consumed by `ensure_write_target`, and to the
+/// general allowlist so a restored vault can then be opened from it.
 #[tauri::command]
 pub async fn pick_save_path(state: State<'_, AppState>, default_name: String) -> CmdResult<Option<String>> {
     let handle = rfd::AsyncFileDialog::new().set_file_name(&default_name).save_file().await;
     let Some(h) = handle else { return Ok(None) };
     let raw = h.path().to_string_lossy().to_string();
     crate::paths::allow(&state.allowed_paths, &raw);
+    crate::paths::allow(&state.write_targets, &raw);
     Ok(Some(raw))
 }
 
@@ -3663,12 +3706,7 @@ fn write_owner_only(path: &str, bytes: &[u8]) -> std::io::Result<()> {
 /// endpoints in the set).
 #[tauri::command]
 pub async fn export_json(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: Option<String>, path: String, ids: Option<Vec<String>>) -> CmdResult<()> {
-    if !crate::paths::is_allowed(&state.allowed_paths, &path) {
-        return Err(VaultError::PathNotAllowed.to_string());
-    }
-    if is_known_vault_path(&app, &state, &path) {
-        return Err(VaultError::AlreadyExists.to_string());
-    }
+    ensure_write_target(&app, &state, &path)?;
     let (vid, v) = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         let vid = resolve_vault_id(&reg, vault_id.as_deref())?;
@@ -3708,12 +3746,7 @@ pub async fn export_json(app: tauri::AppHandle, state: State<'_, AppState>, vaul
 /// session state), then copies the file byte-for-byte to `path`.
 #[tauri::command]
 pub async fn export_vault_copy(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: Option<String>, path: String) -> CmdResult<()> {
-    if !crate::paths::is_allowed(&state.allowed_paths, &path) {
-        return Err(VaultError::PathNotAllowed.to_string());
-    }
-    if is_known_vault_path(&app, &state, &path) {
-        return Err(VaultError::AlreadyExists.to_string());
-    }
+    ensure_write_target(&app, &state, &path)?;
     let (vid, mut v) = {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         let vid = resolve_vault_id(&reg, vault_id.as_deref())?;
@@ -6340,13 +6373,18 @@ pub async fn gdrive_restore_signin(state: State<'_, AppState>) -> CmdResult<Vec<
 }
 
 /// Restore step 2: download the chosen file's ciphertext to a local path the
-/// user picked (already allowlisted by pick_save_path). Records the chosen id
+/// user picked with pick_save_path (`ensure_write_target`: never an existing
+/// vault tab or recent vault, whose live session would keep the old contents
+/// and overwrite the restored bytes on its next save). Records the chosen id
 /// for bind. Keeps the pending session alive.
 #[tauri::command]
-pub async fn gdrive_restore_download(state: State<'_, AppState>, file_id: String, local_path: String) -> CmdResult<()> {
-    if !crate::paths::is_allowed(&state.allowed_paths, &local_path) {
-        return Err(VaultError::PathNotAllowed.to_string());
-    }
+pub async fn gdrive_restore_download(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    file_id: String,
+    local_path: String,
+) -> CmdResult<()> {
+    ensure_write_target(&app, &state, &local_path)?;
     let refresh = {
         let pr = state.pending_restore.lock().map_err(|e| e.to_string())?;
         let p = pr.as_ref().ok_or("restore session expired".to_string())?;
@@ -7247,6 +7285,40 @@ mod tests {
             1,
             "a genuine credential failure must still bump the counter"
         );
+    }
+
+    /// Write destinations are refused for every tab's vault, including tabs
+    /// that never reached the registry (restored locked at launch) and the
+    /// persisted tab list, not only for open sessions.
+    #[test]
+    fn tab_vault_paths_cover_open_restored_and_persisted_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = |n: &str| dir.path().join(n).to_string_lossy().into_owned();
+        for n in ["open.kokos", "restored.kokos", "persisted.kokos", "active.kokos", "other.json"] {
+            std::fs::write(dir.path().join(n), b"x").unwrap();
+        }
+        let state = crate::state::AppState::new();
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(p("open.kokos"), kokos_core::session::Session::new());
+        state.restored_locked.lock().unwrap().push(p("restored.kokos"));
+        {
+            let mut settings = state.settings.lock().unwrap();
+            settings.open_vaults.push(p("persisted.kokos"));
+            settings.active_vault = Some(p("active.kokos"));
+        }
+
+        let known = super::tab_vault_paths(&state);
+        for n in ["open.kokos", "restored.kokos", "persisted.kokos", "active.kokos"] {
+            assert!(super::path_matches_any(&p(n), &known), "{n} must count as a vault path");
+        }
+        let traversal = dir.path().join("sub/../restored.kokos");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        assert!(super::path_matches_any(traversal.to_str().unwrap(), &known), "compared canonically");
+        assert!(!super::path_matches_any(&p("other.json"), &known));
+        assert!(super::path_matches_any("/no/such/dir/x.json", &known), "unresolvable fails closed");
     }
 }
 
