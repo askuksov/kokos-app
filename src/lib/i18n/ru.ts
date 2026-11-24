@@ -564,6 +564,7 @@ export const ru: Record<string, string> = {
   "saveError.retry": "Повторить",
   "saveError.retrying": "Повтор…",
   "saveError.dismiss": "Скрыть",
+  "settings.saveFailed": "Не удалось сохранить настройки — изменение отменено.",
 
   "editor.editEntryTitle": "Изменить запись",
   "editor.newEntryTitle": "Новая запись",

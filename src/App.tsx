@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { VaultProvider } from "./state/VaultContext";
 import { SettingsProvider, useSettings } from "./state/SettingsContext";
 import { LangProvider } from "./state/LangContext";
+import { SettingsSaveError } from "./components/SettingsSaveError";
 import { ClipboardProvider, useClipboard } from "./state/ClipboardContext";
 import { TextImportProvider } from "./state/TextImportContext";
 import { TabsProvider, useTabs } from "./state/TabsContext";
@@ -96,6 +97,7 @@ export default function App() {
             <NmhConfirm />
             <NmhUnlock />
             <TrayIntro />
+            <SettingsSaveError />
           </TabsProvider>
         </ClipboardProvider>
       </LangProvider>

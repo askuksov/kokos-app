@@ -42,3 +42,7 @@
   flex-shrink: 0;
 }
 
+
+.kv-save-error-banner.is-fixed {
+  position: fixed;
+}
