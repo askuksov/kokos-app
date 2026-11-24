@@ -758,6 +758,46 @@ interface FormState {
 
 const BLANK_FORM: FormState = { title: "", notes: "" };
 
+/** What the editor showed before the user touched anything. */
+interface DraftBaseline {
+  form: FormState;
+  isFavorite: boolean;
+  entryType: EntryType;
+  folderId: string;
+  tagIds: string[];
+  fields: EditableField[];
+}
+
+/** A new row left with no name and no value is dropped on save, so it is no change. */
+function countedFields(fields: EditableField[]): EditableField[] {
+  return fields.filter((f) => !(f.id === null && !f.fixed && f.name.trim() === "" && f.value === ""));
+}
+
+function fieldsDiffer(base: EditableField[], cur: EditableField[]): boolean {
+  const a = countedFields(base);
+  const b = countedFields(cur);
+  if (a.length !== b.length) return true;
+  return b.some((f, i) => {
+    const o = a[i];
+    if (
+      f.id !== o.id ||
+      f.template_id !== o.template_id ||
+      f.name !== o.name ||
+      f.field_type !== o.field_type ||
+      f.is_protected !== o.is_protected
+    ) {
+      return true;
+    }
+    // A stored secret that was only revealed, not edited, is saved as "keep".
+    if (f.id !== null && f.is_protected && !f.dirty) return false;
+    return f.value !== o.value;
+  });
+}
+
+function sameIds(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
+}
+
 
 interface EntryEditorProps {
   /** null = create mode. Non-null = edit this entry (getEntry; protected fields fetch via revealField on demand — see handleReveal). */
@@ -779,6 +819,8 @@ interface EntryEditorProps {
    * never does.
    */
   onSaved?: () => void;
+  /** Reports whether the form holds changes that closing it would lose. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -824,7 +866,7 @@ function editorReturnTarget(): HTMLElement | null {
   return document.querySelector<HTMLElement>(".kv-row.is-active") ?? document.querySelector<HTMLElement>("[data-new-entry]");
 }
 
-export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initialTagId }: EntryEditorProps) {
+export function EntryEditor({ entryId, onClose, onSaved, onDirtyChange, initialFolderId, initialTagId }: EntryEditorProps) {
   const { refreshEntries, refreshTags, refreshFolders, setSaveError, folders, tags, templates } = useVault();
   const t = useT();
 
@@ -847,6 +889,7 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   const [tagSuggestions, setTagSuggestions] = useState<TagSuggestion[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const [suggested, setSuggested] = useState(false);
+  const [baseline, setBaseline] = useState<DraftBaseline | null>(null);
   const suggestTokenRef = useRef(0);
   const closedRef = useRef(false);
   useEffect(() => {
@@ -888,24 +931,24 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   const addFieldBtnRef = useRef<HTMLButtonElement>(null);
   const seedTokenRef = useRef(0);
 
-  async function seedFields(type: EntryType) {
+  async function seedFields(type: EntryType, asBaseline = false) {
     const token = ++seedTokenRef.current;
     const seeds: FieldSeed[] = await entryTypeDefaultFields(type);
     if (token !== seedTokenRef.current) return;
-    setFields(
-      seeds.map((s) => ({
-        id: null,
-        template_id: s.template_id,
-        name: s.name,
-        field_type: s.field_type,
-        is_protected: s.is_protected,
-        value: s.value ?? "",
-        revealed: true,
-        dirty: false,
-        clientKey: nextClientKey(),
-        fixed: true,
-      })),
-    );
+    const seeded: EditableField[] = seeds.map((s) => ({
+      id: null,
+      template_id: s.template_id,
+      name: s.name,
+      field_type: s.field_type,
+      is_protected: s.is_protected,
+      value: s.value ?? "",
+      revealed: true,
+      dirty: false,
+      clientKey: nextClientKey(),
+      fixed: true,
+    }));
+    setFields(seeded);
+    if (asBaseline) setBaseline((b) => (b ? { ...b, fields: seeded } : b));
   }
 
   useEffect(() => {
@@ -916,13 +959,22 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
     setTagSuggestions([]);
     setSuggested(false);
     setSuggesting(false);
+    setBaseline(null);
     if (entryId === null) {
       setForm(BLANK_FORM);
       setIsFavorite(false);
       setFolderId(initialFolderId ?? "root");
       setSelectedTagIds(initialTagId ? [initialTagId] : []);
       setEntryType("login");
-      void seedFields("login");
+      setBaseline({
+        form: BLANK_FORM,
+        isFavorite: false,
+        entryType: "login",
+        folderId: initialFolderId ?? "root",
+        tagIds: initialTagId ? [initialTagId] : [],
+        fields: [],
+      });
+      void seedFields("login", true);
       setRevealingIds({});
       setLoading(false);
       setLoadError(false);
@@ -941,19 +993,26 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
         setFolderId(entry.folder_id ?? "root");
         setSelectedTagIds(entry.tags.map((t) => t.id));
         setEntryType(entry.entry_type as EntryType);
-        setFields(
-          entry.fields.map((f) => ({
-            id: f.id,
-            template_id: f.template_id,
-            name: f.name,
-            field_type: f.field_type,
-            is_protected: f.is_protected,
-            value: f.is_protected ? "" : (f.value ?? ""),
-            revealed: !f.is_protected,
-            dirty: false,
-            clientKey: nextClientKey(),
-          })),
-        );
+        const loaded: EditableField[] = entry.fields.map((f) => ({
+          id: f.id,
+          template_id: f.template_id,
+          name: f.name,
+          field_type: f.field_type,
+          is_protected: f.is_protected,
+          value: f.is_protected ? "" : (f.value ?? ""),
+          revealed: !f.is_protected,
+          dirty: false,
+          clientKey: nextClientKey(),
+        }));
+        setFields(loaded);
+        setBaseline({
+          form: { title: entry.title, notes: entry.notes ?? "" },
+          isFavorite: entry.is_favorite,
+          entryType: entry.entry_type as EntryType,
+          folderId: entry.folder_id ?? "root",
+          tagIds: entry.tags.map((t) => t.id),
+          fields: loaded,
+        });
         setRevealingIds({});
         setLoading(false);
       })
@@ -1070,6 +1129,24 @@ export function EntryEditor({ entryId, onClose, onSaved, initialFolderId, initia
   }
 
   const canSave = form.title.trim().length > 0 && !loading && !loadError;
+
+  const dirty =
+    baseline !== null &&
+    !loading &&
+    !loadError &&
+    (form.title !== baseline.form.title ||
+      form.notes !== baseline.form.notes ||
+      isFavorite !== baseline.isFavorite ||
+      entryType !== baseline.entryType ||
+      folderId !== baseline.folderId ||
+      !sameIds(selectedTagIds, baseline.tagIds) ||
+      fieldsDiffer(baseline.fields, fields));
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  onDirtyChangeRef.current = onDirtyChange;
+  useEffect(() => {
+    onDirtyChangeRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => onDirtyChangeRef.current?.(false), []);
 
   function buildNewFields(): NewField[] {
     return fields

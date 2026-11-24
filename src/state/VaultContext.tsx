@@ -22,6 +22,8 @@ export interface SearchUiFilters {
 
 const serverView = (nav: Nav): View => (nav.kind === "view" ? nav.view : "all");
 
+export type RouteGuard = (to: Route, proceed: () => void) => boolean;
+
 interface VaultState {
   vaultId: string | undefined;
   status: StatusInfo | null;
@@ -51,6 +53,13 @@ interface VaultState {
   select: (id: string | null) => void;
   setNav: (n: Nav) => void;
   setRoute: (r: Route) => void;
+  /**
+   * Install (or clear with null) a check every `setRoute` runs first. It gets
+   * the target route and a callback that completes the change; returning true
+   * means it took over (e.g. asked to discard a draft) and will call
+   * `proceed` itself if the change should still happen.
+   */
+  setRouteGuard: (guard: RouteGuard | null) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (t: SettingsTab) => void;
   setSaveError: (e: string | null) => void;
@@ -71,7 +80,18 @@ export function VaultProvider({ children, vaultId }: { children: React.ReactNode
     setNavRaw(n);
     setSelectedId(null);
   }, []);
-  const [route, setRoute] = useState<Route>("main");
+  const [route, setRouteRaw] = useState<Route>("main");
+  const routeGuardRef = useRef<RouteGuard | null>(null);
+  const setRouteGuard = useCallback((guard: RouteGuard | null) => {
+    routeGuardRef.current = guard;
+  }, []);
+  /// Every way into Settings, Trash and the manage screens goes through here,
+  /// so one guard covers them all.
+  const setRoute = useCallback((r: Route) => {
+    const guard = routeGuardRef.current;
+    if (guard && guard(r, () => setRouteRaw(r))) return;
+    setRouteRaw(r);
+  }, []);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [folders, setFolders] = useState<FolderNode[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -224,6 +244,7 @@ export function VaultProvider({ children, vaultId }: { children: React.ReactNode
       select: setSelectedId,
       setNav,
       setRoute,
+      setRouteGuard,
       setSettingsTab,
       setSaveError,
     }),
@@ -257,6 +278,7 @@ export function VaultProvider({ children, vaultId }: { children: React.ReactNode
       setSelectedId,
       setNav,
       setRoute,
+      setRouteGuard,
       setSettingsTab,
       setSaveError,
     ]

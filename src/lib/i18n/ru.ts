@@ -618,6 +618,10 @@ export const ru: Record<string, string> = {
   "editor.suggestFolders": "Папка",
   "editor.suggestTags": "Теги",
   "editor.suggestApply": "Применить {name}",
+  "editor.discardTitle": "Отменить изменения?",
+  "editor.discardBody": "В записи есть несохранённые изменения. Если уйти сейчас, они будут потеряны.",
+  "editor.discardConfirm": "Отменить изменения",
+  "editor.keepEditing": "Продолжить редактирование",
 
   "trash.title": "Корзина",
   "trash.subtitle": "Восстанавливайте удалённые записи или удаляйте их навсегда.",
