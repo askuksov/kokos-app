@@ -148,7 +148,17 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     const idx = cur.findIndex((t) => t.vaultId === vaultId);
     if (idx < 0) return;
     const next = cur.filter((t) => t.vaultId !== vaultId);
-    const nextActive = next.length === 0 ? -1 : Math.min(Math.max(idx - 1, 0), next.length - 1);
+    // Closing a background tab keeps the active one (and switches the backend
+    // back to it); closing the active tab falls back to its left neighbour.
+    const activeVaultId = cur[activeIndexRef.current]?.vaultId ?? null;
+    const keptActive =
+      activeVaultId && activeVaultId !== vaultId ? next.findIndex((t) => t.vaultId === activeVaultId) : -1;
+    const nextActive =
+      next.length === 0
+        ? -1
+        : keptActive >= 0
+          ? keptActive
+          : Math.min(Math.max(idx - 1, 0), next.length - 1);
     const nt = nextActive >= 0 ? next[nextActive] : null;
     ++switchSeqRef.current;
     if (nt && nt.registered && !nt.locked) {
