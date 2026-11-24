@@ -106,13 +106,12 @@ export function TotpField({
   const [state, setState] = useState<TotpState | null>(null);
   const [error, setError] = useState(false);
   const [copied, setCopied] = useState(false);
-  const { copySecret } = useClipboard();
+  const { copySecret, copyEpoch } = useClipboard();
 
   const reqRef = useRef(0);
   const aliveRef = useRef(true);
   const fetchingRef = useRef(false);
   const stateRef = useRef<TotpState | null>(null);
-  stateRef.current = state;
 
   useEffect(() => {
     aliveRef.current = true;
@@ -165,8 +164,9 @@ export function TotpField({
 
   async function handleCopy() {
     if (!state) return;
+    const epoch = copyEpoch();
     try {
-      await copySecret(state.code);
+      await copySecret(state.code, epoch);
       if (aliveRef.current) setCopied(true);
       setTimeout(() => {
         if (aliveRef.current) setCopied(false);
