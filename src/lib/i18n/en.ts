@@ -618,6 +618,10 @@ export const en: Record<string, string> = {
   "editor.suggestFolders": "Folder",
   "editor.suggestTags": "Tags",
   "editor.suggestApply": "Apply {name}",
+  "editor.discardTitle": "Discard changes?",
+  "editor.discardBody": "This entry has unsaved changes. Leaving now discards them.",
+  "editor.discardConfirm": "Discard",
+  "editor.keepEditing": "Keep editing",
 
   "trash.title": "Recycle Bin",
   "trash.subtitle": "Restore deleted entries, or remove them for good.",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { EntryList } from "../components/EntryList";
 import { EntryDetail } from "../components/EntryDetail";
@@ -14,6 +14,7 @@ import { ClipboardPill } from "../components/ClipboardPill";
 import { SyncReopenBanner } from "../components/SyncReopenBanner";
 import { TextImportReview } from "../components/TextImportReview";
 import { ImportDoneToast } from "../components/ImportDoneToast";
+import { DiscardChangesConfirm } from "../components/DiscardChangesConfirm";
 import { useVault } from "../state/VaultContext";
 import { useSettings } from "../state/SettingsContext";
 import { useTextImport } from "../state/TextImportContext";
@@ -43,6 +44,7 @@ export function VaultScreen() {
     route,
     refreshStatus,
     setRoute,
+    setRouteGuard,
     focusSearch,
     nav,
     remoteNewer,
@@ -58,6 +60,21 @@ export function VaultScreen() {
   const [editor, setEditor] = useState<EditorState>(null);
   const [detailVersion, setDetailVersion] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Settings, Trash and the manage screens replace the editor, so leaving for
+  // one of them with unsaved changes asks first.
+  const editorDirtyRef = useRef(false);
+  const [discardAsk, setDiscardAsk] = useState<{ proceed: () => void } | null>(null);
+  useEffect(() => {
+    setRouteGuard((to, proceed) => {
+      if (to === "main" || !editorDirtyRef.current) return false;
+      setDiscardAsk({ proceed });
+      return true;
+    });
+    return () => setRouteGuard(null);
+  }, [setRouteGuard]);
+  const onEditorDirtyChange = useCallback((dirty: boolean) => {
+    editorDirtyRef.current = dirty;
+  }, []);
 
   const { syncNow: applySync, busy: reopenBusy } = useSyncStatus(vaultId, refreshStatus);
   async function doReopen() {
@@ -132,8 +149,8 @@ export function VaultScreen() {
   }, [refreshStatus, resetClipboard]);
 
   // Tray "Settings…". A running text-import review is minimized, not
-  // closed, so Settings is what shows and the import stays resumable. The
-  // entry editor is left as the other Settings entry points leave it.
+  // closed, so Settings is what shows and the import stays resumable. An
+  // entry editor with unsaved changes asks first, as on every route change.
   const openSettingsFromTray = useCallback(() => {
     if (source && !minimized) minimize();
     setRoute("settings");
@@ -185,6 +202,7 @@ export function VaultScreen() {
           initialTagId={editor.mode === "create" ? editor.tagId : null}
           onClose={() => setEditor(null)}
           onSaved={() => setDetailVersion((v) => v + 1)}
+          onDirtyChange={onEditorDirtyChange}
         />
       ) : (
         <>
@@ -212,6 +230,16 @@ export function VaultScreen() {
       )}
       {lastReport && <ImportDoneToast report={lastReport} onDismiss={dismissToast} />}
       <ClipboardPill />
+      {discardAsk && (
+        <DiscardChangesConfirm
+          onCancel={() => setDiscardAsk(null)}
+          onDiscard={() => {
+            setDiscardAsk(null);
+            setEditor(null);
+            discardAsk.proceed();
+          }}
+        />
+      )}
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
