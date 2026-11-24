@@ -69,14 +69,43 @@ function ColorPopover({
   const presetMatch = activeLower ? TAG_COLORS.find((c) => c.hex.toLowerCase() === activeLower) : undefined;
   const customColor = activeLower && !presetMatch && HEX_RE.test(activeLower) ? activeColor : null;
   const [hexDraft, setHexDraft] = useState(customColor ?? "#4d8fd6");
+  const pickerRef = useRef<HTMLInputElement>(null);
+  // Colour dragged in the native picker but not yet written to the vault.
+  const pendingRef = useRef<string | null>(null);
+
+  // The native picker fires input events continuously while dragging; each
+  // pick rewrites the whole vault, so only commit the final colour.
+  function flushPending() {
+    const v = pendingRef.current;
+    pendingRef.current = null;
+    if (v !== null) onPick(v);
+  }
 
   useEffect(() => {
     function onDown(ev: PointerEvent) {
       if (anchorRef.current && !anchorRef.current.contains(ev.target as Node)) onClose();
     }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key !== "Escape") return;
+      flushPending();
+      onClose();
+    }
     document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [onClose, anchorRef]);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose, anchorRef, onPick]);
+
+  // React's onChange is the input event; the native change event fires once
+  // the picker is dismissed.
+  useEffect(() => {
+    const el = pickerRef.current;
+    if (!el) return;
+    el.addEventListener("change", flushPending);
+    return () => el.removeEventListener("change", flushPending);
+  }, [onPick]);
 
   function applyHexDraft(v: string) {
     let h = v.trim();
@@ -109,14 +138,16 @@ function ColorPopover({
         <span className="kv-color-custom-label">{t("tags.customColor")}</span>
         <input
           type="color"
-          value={customColor ?? hexDraft}
+          ref={pickerRef}
+          value={HEX_RE.test(hexDraft) ? hexDraft : "#4d8fd6"}
           title={t("tags.pickColor")}
           aria-label={t("tags.customColorPicker")}
           className={customColor ? "is-active" : ""}
           onChange={(e) => {
             setHexDraft(e.target.value);
-            onPick(e.target.value);
+            pendingRef.current = e.target.value;
           }}
+          onBlur={flushPending}
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
