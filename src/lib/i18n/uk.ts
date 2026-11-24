@@ -564,6 +564,7 @@ export const uk: Record<string, string> = {
   "saveError.retry": "Повторити",
   "saveError.retrying": "Повтор…",
   "saveError.dismiss": "Приховати",
+  "settings.saveFailed": "Не вдалося зберегти налаштування — зміну скасовано.",
 
   "editor.editEntryTitle": "Змінити запис",
   "editor.newEntryTitle": "Новий запис",
