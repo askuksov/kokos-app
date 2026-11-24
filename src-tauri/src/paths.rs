@@ -50,9 +50,31 @@ pub fn is_allowed(set: &Mutex<HashSet<PathBuf>>, raw: &str) -> bool {
     }
 }
 
+/// `is_allowed` that also removes the entry: for one-shot grants such as a
+/// write destination picked for a single write.
+pub fn take(set: &Mutex<HashSet<PathBuf>>, raw: &str) -> bool {
+    match normalise(Path::new(raw)) {
+        Ok(c) => set.lock().map(|mut s| s.remove(&c)).unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn take_grants_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let set = Mutex::new(HashSet::new());
+        let p = dir.path().join("out.json");
+        allow(&set, p.to_str().unwrap());
+        let traversal = dir.path().join("sub/../out.json");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        assert!(take(&set, traversal.to_str().unwrap()), "picked path is granted, compared canonically");
+        assert!(!take(&set, p.to_str().unwrap()), "a second write needs a new pick");
+        assert!(!take(&set, dir.path().join("other.json").to_str().unwrap()), "unpicked path denied");
+    }
 
     #[test]
     fn traversal_and_direct_forms_match_after_allow() {
