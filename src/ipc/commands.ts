@@ -38,12 +38,23 @@ export type KeyfileAction =
 export const verifyPassword = (password: string, keyfilePath: string | null, vaultId?: string) =>
   invoke<boolean>("verify_password", { password, keyfilePath, vaultId });
 
+/** `currentPassword`/`currentKeyfile` are re-checked by the backend before the change. */
 export const changeMasterPassword = (
+  currentPassword: string,
+  currentKeyfile: string | null,
   newPassword: string,
   hint: string | null,
   keyfile: KeyfileAction,
   vaultId?: string,
-) => invoke<void>("change_master_password", { newPassword, newHint: hint, keyfile, vaultId });
+) =>
+  invoke<void>("change_master_password", {
+    currentPassword,
+    currentKeyfile,
+    newPassword,
+    newHint: hint,
+    keyfile,
+    vaultId,
+  });
 export const setVaultHint = (hint: string, vaultId?: string) =>
   invoke<void>("set_vault_hint", { hint, vaultId });
 export const closeVault = () => invoke<void>("close_vault");
