@@ -131,7 +131,29 @@ impl Session {
     /// own path/header since the session's fields couldn't hold them while
     /// the vault was out. Otherwise `v` is put back and the session ends up
     /// exactly as if it had never left.
-    pub fn end_borrow(&mut self, v: OpenVault) {
+    ///
+    /// A deferred lock writes the "lock" audit row (`vault::save_with_audit`)
+    /// before dropping the vault, as an immediate lock does; it runs on the
+    /// caller's thread, which is fine since the case is rare. A deferred
+    /// close writes nothing.
+    pub fn end_borrow(&mut self, mut v: OpenVault) {
+        if self.close_requested == Some(CloseKind::Lock) {
+            let _ = crate::vault::save_with_audit(&mut v, "lock", None);
+        }
+        self.finish_borrow(v);
+    }
+
+    /// `end_borrow` that always ends locked (or closed, if a close was
+    /// requested meanwhile) and never writes `v`: for a caller that already
+    /// wrote the "lock" row itself (`lock_vault`), or whose file was replaced
+    /// on disk while the vault was on loan (a sync pull), so the in-memory
+    /// copy is stale and the next unlock must read the new file.
+    pub fn end_borrow_and_lock(&mut self, v: OpenVault) {
+        self.close_requested.get_or_insert(CloseKind::Lock);
+        self.finish_borrow(v);
+    }
+
+    fn finish_borrow(&mut self, v: OpenVault) {
         self.borrowed = false;
         self.borrowed_path = None;
         self.borrowed_header = None;
@@ -227,6 +249,55 @@ mod tests {
         assert!(s.vault.is_none(), "end_borrow must NOT resurrect a vault that was locked while on loan");
         assert!(s.is_locked());
         assert!(s.last_path.is_some(), "last_path must be set so the UI can offer to unlock the same file");
+    }
+
+    #[test]
+    fn deferred_lock_writes_the_lock_audit_row_without_a_new_revision() {
+        let (_dir, v) = open_test_vault();
+        let path = v.path.clone();
+        let rev = v.sync_meta().unwrap().rev;
+        let mut s = Session::new();
+        s.vault = Some(v);
+
+        let v = s.begin_borrow().unwrap();
+        s.lock();
+        s.end_borrow(v);
+
+        let v = crate::vault::open(&path, b"password", None).unwrap();
+        let rows = crate::audit::list(&v.conn, 10).unwrap();
+        assert_eq!(rows.first().map(|r| r.event.as_str()), Some("lock"));
+        assert_eq!(v.sync_meta().unwrap().rev, rev, "the lock row is not a content change");
+    }
+
+    #[test]
+    fn end_borrow_and_lock_locks_without_writing_the_file() {
+        let (_dir, v) = open_test_vault();
+        let path = v.path.clone();
+        let mut s = Session::new();
+        s.vault = Some(v);
+
+        let v = s.begin_borrow().unwrap();
+        s.lock();
+        std::fs::write(&path, b"pulled").unwrap();
+        s.end_borrow_and_lock(v);
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"pulled", "a stale vault must not overwrite the pulled file");
+        assert!(s.vault.is_none());
+        assert!(s.is_locked());
+    }
+
+    #[test]
+    fn end_borrow_and_lock_keeps_a_deferred_close() {
+        let (_dir, v) = open_test_vault();
+        let mut s = Session::new();
+        s.vault = Some(v);
+
+        let v = s.begin_borrow().unwrap();
+        s.close();
+        s.end_borrow_and_lock(v);
+
+        assert!(s.vault.is_none());
+        assert!(s.last_path.is_none(), "close still wins over the lock a pull implies");
     }
 
     #[test]

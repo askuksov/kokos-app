@@ -22,6 +22,9 @@ pub struct OpenVault {
     /// `OpenVault`, not per file: a stale `.bak` from an earlier session must
     /// not stop a new migration cycle from taking a fresh one.
     backup_taken: bool,
+    /// `conn.total_changes()` right after the last successful write of the
+    /// container; any row change since then makes `has_unsaved_changes` true.
+    saved_changes: u64,
 }
 
 /// Hand-written rather than `#[derive(Debug)]`: `zeroize::Zeroizing<Z>` itself
@@ -55,6 +58,17 @@ impl OpenVault {
             "SELECT value FROM metadata WHERE key='last_modified'", [], |r| r.get::<_, String>(0),
         ).ok().and_then(|s| s.parse().ok()).unwrap_or(0);
         Ok(crate::sync::SyncMeta { rev, modified, device })
+    }
+
+    /// True when rows changed in memory since the container was last written
+    /// (a mutation whose `save` failed or never ran, or the migration and
+    /// trash cleanup `open` does before the first write).
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.conn.total_changes() != self.saved_changes
+    }
+
+    fn mark_saved(&mut self) {
+        self.saved_changes = self.conn.total_changes();
     }
 }
 
@@ -92,7 +106,8 @@ pub fn create(
 
     let mut conn = db::create_fresh()?;
     write_container(&mut conn, &header, &key, path)?;
-    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false, backup_taken: false })
+    let saved_changes = conn.total_changes();
+    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false, backup_taken: false, saved_changes })
 }
 
 /// Upper bound on a vault container accepted by `open`, checked BEFORE the
@@ -146,7 +161,7 @@ pub fn open(path: &Path, password: &[u8], keyfile: Option<&Path>) -> Result<Open
     let retention = crate::trash::trash_auto_delete_days(&conn);
     crate::trash::auto_delete_old(&conn, retention)?;
 
-    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated, backup_taken: false })
+    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated, backup_taken: false, saved_changes: 0 })
 }
 
 /// Saves in the container's current header version: a v1 file stays v1 until
@@ -182,6 +197,7 @@ pub fn save(v: &mut OpenVault) -> Result<()> {
     v.header.nonce = crypto::random_nonce();
     write_container(&mut v.conn, &v.header, &v.key, &v.path)?;
     v.migrated = false;
+    v.mark_saved();
     Ok(())
 }
 
@@ -247,6 +263,7 @@ pub fn change_password(
 
     v.header = new_header;
     v.key = new_key;
+    v.mark_saved();
     // The migrated DB is now on disk and its transient `.bak` is gone; a later
     // save must not take a "pre-migration" backup of this file.
     v.migrated = false;
@@ -312,7 +329,28 @@ pub fn save_opened(v: &mut OpenVault) -> Result<()> {
     v.header.nonce = crypto::random_nonce();
     write_container(&mut v.conn, &v.header, &v.key, &v.path)?;
     v.migrated = false;
+    v.mark_saved();
     Ok(())
+}
+
+/// Appends a non-content audit row (e.g. "lock") and writes the vault. The
+/// row alone is not a modification, so this is `save_opened` and the sync
+/// revision stays put: bumping it on lock would let a stale local copy win
+/// LWW over a newer remote one. Only when content changed since the last
+/// write (a mutation whose own save failed) does it take a full `save`, so
+/// that change gets a new revision and is pushed like any other edit.
+///
+/// Both steps run even if the audit append fails; its error is returned after
+/// the write.
+pub fn save_with_audit(v: &mut OpenVault, event: &str, detail: Option<&str>) -> Result<()> {
+    let content_changed = v.has_unsaved_changes();
+    let audited = crate::audit::append(&v.conn, event, detail);
+    if content_changed {
+        save(v)?;
+    } else {
+        save_opened(v)?;
+    }
+    audited
 }
 
 fn write_container(conn: &mut Connection, header: &Header, key: &[u8; KEY_LEN], path: &Path) -> Result<()> {
@@ -380,6 +418,60 @@ mod tests {
         save_opened(&mut v).unwrap();
         let rev_after = crate::db::get_sync_revision(&v.conn).unwrap();
         assert_eq!(rev_before, rev_after, "open-time persist must not bump sync_revision");
+    }
+
+    #[test]
+    fn save_with_audit_keeps_revision_on_a_clean_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.kokos");
+        let mut v = create(&path, b"pw", "", FAST, None).unwrap();
+        save(&mut v).unwrap();
+        let before = v.sync_meta().unwrap();
+        assert!(!v.has_unsaved_changes(), "a successful save leaves nothing unsaved");
+
+        save_with_audit(&mut v, "lock", None).unwrap();
+        assert!(!v.has_unsaved_changes(), "the audit row is written too");
+        let after = v.sync_meta().unwrap();
+        assert_eq!(before.rev, after.rev, "a lock audit row must not bump sync_revision");
+        assert_eq!(before.modified, after.modified, "nor last_modified");
+
+        drop(v);
+        let v = open(&path, b"pw", None).unwrap();
+        assert_eq!(v.sync_meta().unwrap().rev, before.rev);
+        let rows = crate::audit::list(&v.conn, 10).unwrap();
+        assert_eq!(rows[0].event, "lock", "the audit row must reach the file");
+    }
+
+    #[test]
+    fn save_with_audit_bumps_revision_when_content_was_left_unsaved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.kokos");
+        let mut v = create(&path, b"pw", "", FAST, None).unwrap();
+        let rev = v.sync_meta().unwrap().rev;
+        // A content change whose own save never happened.
+        v.conn
+            .execute("INSERT INTO metadata (key, value) VALUES ('unsaved_probe', '1')", [])
+            .unwrap();
+        assert!(v.has_unsaved_changes());
+
+        save_with_audit(&mut v, "lock", None).unwrap();
+        assert_eq!(v.sync_meta().unwrap().rev, rev + 1, "unsaved content must get a new revision");
+        assert!(!v.has_unsaved_changes());
+    }
+
+    #[test]
+    fn has_unsaved_changes_after_save_opened_and_change_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.kokos");
+        let mut v = create(&path, b"pw", "", FAST, None).unwrap();
+        assert!(!v.has_unsaved_changes(), "a fresh vault is fully written");
+        crate::audit::append(&v.conn, "unlock", None).unwrap();
+        assert!(v.has_unsaved_changes());
+        save_opened(&mut v).unwrap();
+        assert!(!v.has_unsaved_changes());
+        crate::audit::append(&v.conn, "key_rotated", None).unwrap();
+        change_password(&mut v, b"pw2", None, KeyfileAction::Keep).unwrap();
+        assert!(!v.has_unsaved_changes(), "change_password writes the whole database");
     }
 
     #[test]
