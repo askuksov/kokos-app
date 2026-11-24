@@ -48,6 +48,9 @@ export function ClipboardProvider({ children }: { children: React.ReactNode }) {
   const invalidate = useCallback(() => {
     epochRef.current += 1;
     stop();
+    setActive(false);
+    setRemaining(0);
+    setTotal(0);
   }, [stop]);
 
   const copyEpoch = useCallback(() => epochRef.current, []);
