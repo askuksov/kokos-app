@@ -144,10 +144,9 @@ pub fn is_private_lan_host(host: &str) -> bool {
 }
 
 /// True when no stored scheme can be a downgrade for `page`: it is served
-/// over TLS, or its host is loopback or a private-network IP literal.
+/// over TLS, or it is a loopback host.
 pub fn page_accepts_any_scheme(page: &str) -> bool {
-    is_secure_scheme(page)
-        || host_of(page).is_some_and(|h| is_loopback_host(&h) || is_private_lan_host(&h))
+    is_secure_scheme(page) || host_of(page).is_some_and(|h| is_loopback_host(&h))
 }
 
 /// Scheme half of the fill rule: may a credential stored under `stored` be
@@ -156,13 +155,20 @@ pub fn page_accepts_any_scheme(page: &str) -> bool {
 /// network path of the http page could read what gets filled. A stored value
 /// without a scheme counts as https: a bare `bank.com` most likely means the
 /// real, TLS-served site, and a downgrade must not slip through just because
-/// the scheme was never typed. Loopback and private-network IP pages are
-/// exempt.
+/// the scheme was never typed. Loopback pages are exempt; on private-network
+/// IP pages only a scheme-less stored value is let through.
 pub fn scheme_allows(stored: &str, page: &str) -> bool {
     if page_accepts_any_scheme(page) {
         return true;
     }
-    matches!(scheme_of(stored).as_deref(), Some("http" | "ws"))
+    match scheme_of(stored).as_deref() {
+        Some("http" | "ws") => true,
+        // On a private-network IP page a login saved without a scheme (the
+        // usual router entry) still fills; one saved explicitly as https
+        // does not, since that device does speak TLS.
+        None => host_of(page).is_some_and(|h| is_private_lan_host(&h)),
+        _ => false,
+    }
 }
 
 /// The full autofill gate: same site AND no https-to-http downgrade.
@@ -376,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn private_lan_ip_pages_accept_any_stored_scheme() {
+    fn private_lan_ip_pages_accept_scheme_less_logins() {
         assert!(is_private_lan_host("192.168.50.163"));
         assert!(is_private_lan_host("10.0.0.1"));
         assert!(is_private_lan_host("172.16.0.1"));
@@ -391,7 +397,12 @@ mod tests {
         assert!(!is_private_lan_host("[2001:db8::1]"));
         // A bare or https-stored router login still fills on its plain-http page.
         assert!(fill_allowed("192.168.50.163", "http://192.168.50.163/login"));
-        assert!(fill_allowed("https://192.168.50.163", "http://192.168.50.163/"));
+        assert!(
+            !fill_allowed("https://192.168.50.163", "http://192.168.50.163/"),
+            "an explicitly https-stored device login is not downgraded"
+        );
+        assert!(fill_allowed("http://192.168.50.163", "http://192.168.50.163/"));
+        assert!(fill_allowed("https://192.168.50.163", "https://192.168.50.163/"));
         // Public hosts keep the no-downgrade rule.
         assert!(!fill_allowed("https://bank.com", "http://bank.com/"));
     }
