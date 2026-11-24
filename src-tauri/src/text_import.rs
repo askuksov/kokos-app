@@ -13,6 +13,7 @@ use kokos_ai::text_import::engine::gen::GenExtractor;
 use kokos_ai::text_import::engine::pipeline::analyze_text_with_progress;
 use kokos_ai::text_import::engine::registry::resolve_gen;
 use kokos_ai::text_import::model::{ImportProposal, ProposedEntry};
+use kokos_ai::text_import::preparse::split_blocks;
 use kokos_ai::AiError;
 use zeroize::Zeroize;
 
@@ -474,21 +475,36 @@ fn floor_boundary(s: &str, max: usize) -> usize {
 }
 
 /// Raw-source preview for one entry: the blank-line-delimited block of `text`
-/// that contains the entry's first field value (the block pre-parse split on),
-/// falling back to the head of the file. Always bounded by
+/// that contains the entry's first field value (the same `split_blocks` the
+/// pipeline uses, so whitespace-only and `\r\n` blank lines separate blocks
+/// too), falling back to the head of the file. Always bounded by
 /// `MAX_SOURCE_PREVIEW_BYTES`, so memory is entries x constant, not entries x file.
 fn source_preview(text: &str, e: &ProposedEntry) -> String {
     let hit = e.fields.iter().map(|f| f.value.as_str()).find(|v| !v.is_empty()).and_then(|v| text.find(v));
     let (start, end) = match hit {
-        Some(pos) => {
-            let start = text[..pos].rfind("\n\n").map(|i| i + 2).unwrap_or(0);
-            let end = text[pos..].find("\n\n").map(|i| pos + i).unwrap_or(text.len());
-            (start, end)
-        }
+        Some(pos) => split_blocks(text)
+            .into_iter()
+            .find(|b| pos < b.end)
+            .map_or((0, text.len()), |b| (b.start.min(pos), b.end)),
         None => (0, text.len()),
     };
     let block = &text[start..end];
     block[..floor_boundary(block, MAX_SOURCE_PREVIEW_BYTES)].trim().to_string()
+}
+
+/// Rewrite `\r\n` line endings to `\n` before analysis. The analysis, its
+/// verbatim integrity check and the source preview all run on the returned
+/// buffer, so every span stays consistent; values never carry a stray `\r`
+/// and multi-line values the model echoes with `\n` still match the source.
+/// The original buffer is wiped when it is replaced.
+fn normalize_newlines(text: String) -> String {
+    if !text.contains("\r\n") {
+        return text;
+    }
+    let normalized = text.replace("\r\n", "\n");
+    let mut old = text;
+    old.zeroize();
+    normalized
 }
 
 /// Keep at most `max` entries of a proposal; returns how many were dropped.
@@ -628,7 +644,7 @@ fn analyze_paths(
             // swapped after the walk cannot bypass the cap.
             let bytes = crate::paths::safe_io::read_regular_capped_path(path, MAX_TEXT_IMPORT_SIZE).ok()??;
             let mut text = match String::from_utf8(bytes) {
-                Ok(t) => t,
+                Ok(t) => normalize_newlines(t),
                 Err(e) => {
                     e.into_bytes().zeroize();
                     return None;
@@ -925,6 +941,22 @@ mod tests {
         let big = format!("b-secret{}", "é".repeat(20_000));
         let p = source_preview(&big, &e);
         assert!(p.len() <= MAX_SOURCE_PREVIEW_BYTES);
+    }
+
+    #[test]
+    fn source_preview_splits_crlf_files_on_blank_lines() {
+        let e = one(EntryKind::Login, "b-secret").entries.remove(0);
+        let text = "a: 1\r\nother-secret\r\n\r\nuser: x\r\nb-secret\r\n \r\nc: 3\r\n";
+        assert_eq!(source_preview(text, &e), "user: x\r\nb-secret");
+    }
+
+    #[test]
+    fn crlf_file_is_normalized_and_previews_only_its_own_block() {
+        let text = normalize_newlines("a: 1\r\nother-secret\r\n\r\nuser: x\r\nb-secret\r\n".to_string());
+        assert_eq!(text, "a: 1\nother-secret\n\nuser: x\nb-secret\n");
+        let e = one(EntryKind::Login, "b-secret").entries.remove(0);
+        assert_eq!(source_preview(&text, &e), "user: x\nb-secret");
+        assert_eq!(normalize_newlines("lf\nonly".to_string()), "lf\nonly");
     }
 
     #[test]
