@@ -1177,17 +1177,27 @@ fn keyfile_was_changed(action: &KeyfileActionDto) -> bool {
 /// kokos_core's own doc comment on `change_password` guarantees `v` is left byte-for-byte
 /// usable with the old credentials if any step fails, so losing the open vault on a failed
 /// password change would be a regression, not just a missed optimization.
+///
+/// Re-checks the current credentials (`current_password`, plus `current_keyfile` on a
+/// key-file vault) in the same blocking call, right before the change: the frontend's
+/// `verify_password` step alone would let a compromised WebView skip it and lock the owner
+/// out. This covers every rotation the command does, key file Set/Remove included.
 #[tauri::command]
 pub async fn change_master_password(
     state: State<'_, AppState>,
     vault_id: Option<String>,
+    current_password: String,
+    current_keyfile: Option<String>,
     new_password: String,
     new_hint: Option<String>,
     keyfile: KeyfileActionDto,
 ) -> CmdResult<()> {
+    ensure_keyfile_allowed(&state.allowed_paths, current_keyfile.as_deref())?;
     if let KeyfileActionDto::Set { path } | KeyfileActionDto::Resupply { path } = &keyfile {
         ensure_keyfile_allowed(&state.allowed_paths, Some(path))?;
     }
+    let current_pw = Zeroizing::new(current_password.into_bytes());
+    let current_keyfile = current_keyfile.map(PathBuf::from);
     let pw_for_reconcile = Zeroizing::new(new_password.clone());
     let pw = Zeroizing::new(new_password.into_bytes());
     let keyfile_changed = keyfile_was_changed(&keyfile);
@@ -1210,7 +1220,8 @@ pub async fn change_master_password(
     };
 
     let (v, result) = tauri::async_runtime::spawn_blocking(move || {
-        let result = vault::change_password(&mut v, &pw, new_hint.as_deref(), action);
+        let result = verify_current_credentials(&v, &current_pw, current_keyfile.as_deref())
+            .and_then(|_| vault::change_password(&mut v, &pw, new_hint.as_deref(), action));
         if result.is_ok() {
             let _ = kokos_core::audit::append(&v.conn, "master_password_changed", None);
             if keyfile_changed {
@@ -1240,6 +1251,26 @@ pub async fn change_master_password(
     }
 
     result.map_err(|e| e.to_string())
+}
+
+/// Backend gate of `change_master_password`. The key file counts only when the
+/// vault uses one (as in `verify_password`); a key-file vault without one is
+/// refused before the KDF runs. A mismatch answers like a failed unlock.
+fn verify_current_credentials(
+    v: &vault::OpenVault,
+    password: &[u8],
+    keyfile: Option<&Path>,
+) -> Result<(), VaultError> {
+    let keyfile = if v.header.requires_keyfile() {
+        Some(keyfile.ok_or(VaultError::KeyfileRequired)?)
+    } else {
+        None
+    };
+    if vault::verify_password(v, password, keyfile)? {
+        Ok(())
+    } else {
+        Err(VaultError::InvalidCredentialsOrCorrupt)
+    }
 }
 
 /// Verify the current master password (+ the current key file, if the open
@@ -7319,6 +7350,64 @@ mod tests {
         assert!(super::path_matches_any(traversal.to_str().unwrap(), &known), "compared canonically");
         assert!(!super::path_matches_any(&p("other.json"), &known));
         assert!(super::path_matches_any("/no/such/dir/x.json", &known), "unresolvable fails closed");
+    }
+}
+
+#[cfg(test)]
+mod change_password_gate_tests {
+    use kokos_core::crypto::Argon2Params;
+    use kokos_core::error::VaultError;
+    use kokos_core::vault::{self, KeyfileAction};
+
+    const FAST: Argon2Params = Argon2Params { memory_kib: 19_456, time_cost: 2, parallelism: 1 };
+
+    #[test]
+    fn password_only_vault_accepts_only_the_current_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = vault::create(&dir.path().join("v.kokos"), b"current", "", FAST, None).unwrap();
+
+        assert!(super::verify_current_credentials(&v, b"current", None).is_ok());
+        assert!(matches!(
+            super::verify_current_credentials(&v, b"wrong", None),
+            Err(VaultError::InvalidCredentialsOrCorrupt)
+        ));
+    }
+
+    #[test]
+    fn keyfile_vault_needs_the_current_key_file_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let kf = dir.path().join("key.bin");
+        let other = dir.path().join("other.bin");
+        std::fs::write(&kf, b"the key file").unwrap();
+        std::fs::write(&other, b"another file").unwrap();
+        let mut v = vault::create(&dir.path().join("v.kokos"), b"current", "", FAST, None).unwrap();
+        vault::change_password(&mut v, b"current", None, KeyfileAction::Set(kf.clone())).unwrap();
+
+        assert!(super::verify_current_credentials(&v, b"current", Some(&kf)).is_ok());
+        assert!(matches!(
+            super::verify_current_credentials(&v, b"current", None),
+            Err(VaultError::KeyfileRequired)
+        ));
+        assert!(matches!(
+            super::verify_current_credentials(&v, b"current", Some(&other)),
+            Err(VaultError::InvalidCredentialsOrCorrupt)
+        ));
+        assert!(matches!(
+            super::verify_current_credentials(&v, b"wrong", Some(&kf)),
+            Err(VaultError::InvalidCredentialsOrCorrupt)
+        ));
+    }
+
+    /// A key file passed for a vault that has none is ignored, as in
+    /// `verify_password`; only the password decides.
+    #[test]
+    fn password_only_vault_ignores_a_supplied_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let kf = dir.path().join("key.bin");
+        std::fs::write(&kf, b"the key file").unwrap();
+        let v = vault::create(&dir.path().join("v.kokos"), b"current", "", FAST, None).unwrap();
+
+        assert!(super::verify_current_credentials(&v, b"current", Some(&kf)).is_ok());
     }
 }
 
