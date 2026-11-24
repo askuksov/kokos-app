@@ -149,7 +149,11 @@ and the access-control primitives it can use differ.
   `https://` (or stored without a scheme) is never offered or released on a
   plain-`http://` page of the same site; an `http://` login may still fill
   on `https://`. Loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`,
-  `[::1]`) are exempt.
+  `[::1]`) and private-network IP literals (`10/8`, `172.16/12`,
+  `192.168/16`, `169.254/16`, IPv6 `fc00::/7`, `fe80::/10`) are exempt:
+  routers and NAS boxes rarely serve TLS, and their plain-http traffic is
+  readable only from the local network. Host names (e.g. `*.local`) are not
+  exempt.
 - Per-site grants: `kokos-core/src/nmh_grants.rs` is the **persistent**
   tier (`origin`, `domain`) surviving app restart, keyed by exact
   `(origin, domain)` — a different origin on the same domain does
