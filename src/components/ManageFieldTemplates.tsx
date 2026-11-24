@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useVault } from "../state/VaultContext";
 import { useT } from "../state/LangContext";
+import { errorMessage } from "../lib/errors";
 import { createTemplate, deleteTemplate, updateTemplate } from "../ipc/commands";
 import type { FieldTemplate } from "../ipc/types";
 import "./ManageFieldTemplates.css";
@@ -65,7 +66,7 @@ function TemplateRow({
   onDelete,
 }: {
   template: FieldTemplate;
-  onUpdate: (id: string, name: string, fieldType: string, isProtected: boolean) => void;
+  onUpdate: (id: string, name: string, fieldType: string, isProtected: boolean) => Promise<boolean>;
   onDelete: (id: string) => void;
 }) {
   const t = useT();
@@ -75,7 +76,9 @@ function TemplateRow({
   function commit() {
     const trimmed = name.trim();
     if (trimmed && trimmed !== template.name) {
-      onUpdate(template.id, trimmed, template.field_type, template.is_protected);
+      void onUpdate(template.id, trimmed, template.field_type, template.is_protected).then((ok) => {
+        if (!ok) setName(template.name);
+      });
     } else {
       setName(template.name);
     }
@@ -177,13 +180,18 @@ export function ManageFieldTemplates({ embedded }: { embedded?: boolean }) {
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState("text");
   const [newProtected, setNewProtected] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
-  async function handleUpdate(id: string, name: string, fieldType: string, isProtected: boolean) {
+  async function handleUpdate(id: string, name: string, fieldType: string, isProtected: boolean): Promise<boolean> {
+    setRenameError(null);
     try {
       await updateTemplate(id, name, fieldType, isProtected);
       await refreshTemplates();
+      return true;
     } catch (e) {
       console.error("update_template failed:", e);
+      setRenameError(errorMessage(e, t));
+      return false;
     }
   }
 
@@ -214,6 +222,11 @@ export function ManageFieldTemplates({ embedded }: { embedded?: boolean }) {
     <>
       <p className="kv-settings-sub">{t("templates.subtitle")}</p>
 
+      {renameError && (
+        <p className="kv-error kv-manage-error" role="alert">
+          {renameError}
+        </p>
+      )}
       <div className="kv-card">
         {templates.map((template) => (
           <TemplateRow key={template.id} template={template} onUpdate={handleUpdate} onDelete={handleDelete} />

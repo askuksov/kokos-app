@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useVault } from "../state/VaultContext";
 import { useT, useTn } from "../state/LangContext";
+import { errorMessage } from "../lib/errors";
 import { createTag, deleteTag, recolorTag, renameTag } from "../ipc/commands";
 import type { Tag } from "../ipc/types";
 import { TAG_COLORS, tagColor } from "../lib/tagColors";
@@ -149,7 +150,7 @@ function TagRow({
 }: {
   tag: Tag;
   colorOpen: boolean;
-  onRename: (id: string, name: string) => void;
+  onRename: (id: string, name: string) => Promise<boolean>;
   onToggleColor: (id: string) => void;
   onRecolor: (id: string, hex: string) => void;
   onCloseColor: () => void;
@@ -163,8 +164,11 @@ function TagRow({
 
   function commit() {
     const trimmed = name.trim();
-    if (trimmed && trimmed !== tag.name) onRename(tag.id, trimmed);
-    else setName(tag.name);
+    if (trimmed && trimmed !== tag.name) {
+      void onRename(tag.id, trimmed).then((ok) => {
+        if (!ok) setName(tag.name);
+      });
+    } else setName(tag.name);
   }
 
   const countLabel = tag.usage === 0 ? t("common.noItems") : tn("common.items", tag.usage);
@@ -235,14 +239,19 @@ export function ManageTags() {
   const t = useT();
   const [newName, setNewName] = useState("");
   const [colorOpenFor, setColorOpenFor] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
-  async function handleRename(id: string, name: string) {
+  async function handleRename(id: string, name: string): Promise<boolean> {
+    setRenameError(null);
     try {
       await renameTag(id, name);
       await refreshTags();
       await refreshEntries();
+      return true;
     } catch (e) {
       console.error("rename_tag failed:", e);
+      setRenameError(errorMessage(e, t));
+      return false;
     }
   }
 
@@ -289,6 +298,11 @@ export function ManageTags() {
         <h1>{t("tags.title")}</h1>
         <p className="kv-settings-sub">{t("tags.subtitle")}</p>
 
+        {renameError && (
+          <p className="kv-error kv-manage-error" role="alert">
+            {renameError}
+          </p>
+        )}
         <div className="kv-card is-overflow-visible">
           {tags.map((tag) => (
             <TagRow

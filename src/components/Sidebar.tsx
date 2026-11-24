@@ -270,30 +270,41 @@ export function Sidebar() {
     }
   }
 
+  // Fires after a real drop (already committed by onDropRow) and after a
+  // cancelled drag (Esc, drop outside the list); only the latter has state left.
   function onDragEndRow() {
-    void commitMove();
+    dragIdRef.current = null;
+    dropRef.current = null;
+    setDragId(null);
+    setDrop(null);
   }
 
-  function onDragOverRow(ev: DragEvent<HTMLButtonElement>, node: FolderNode) {
-    ev.preventDefault();
-    if (!dragId || dragId === node.id || isDescendant(folders, dragId, node.id)) {
-      dropRef.current = null;
-      setDrop(null);
-      return;
+  function dropTargetAt(ev: DragEvent<HTMLButtonElement>, node: FolderNode): DropTarget | null {
+    if (!dragIdRef.current || dragIdRef.current === node.id || isDescendant(folders, dragIdRef.current, node.id)) {
+      return null;
     }
     const rect = ev.currentTarget.getBoundingClientRect();
     const y = (ev.clientY - rect.top) / rect.height;
     const pos: DropPos = node.id === "root" ? "inside" : y < 0.28 ? "before" : y > 0.72 ? "after" : "inside";
-    dropRef.current = { id: node.id, pos };
-    setDrop({ id: node.id, pos });
+    return { id: node.id, pos };
+  }
+
+  function onDragOverRow(ev: DragEvent<HTMLButtonElement>, node: FolderNode) {
+    ev.preventDefault();
+    const target = dropTargetAt(ev, node);
+    dropRef.current = target;
+    setDrop(target);
   }
 
   function onDragLeaveRow(node: FolderNode) {
+    if (dropRef.current?.id === node.id) dropRef.current = null;
     setDrop((prev) => (prev && prev.id === node.id ? null : prev));
   }
 
-  async function onDropRow(ev: DragEvent<HTMLButtonElement>, _node: FolderNode) {
+  async function onDropRow(ev: DragEvent<HTMLButtonElement>, node: FolderNode) {
     ev.preventDefault();
+    // Recompute: dragleave may have cleared the ref just before the drop.
+    dropRef.current = dropTargetAt(ev, node);
     void commitMove();
   }
 

@@ -4,6 +4,7 @@ import { useVault } from "../state/VaultContext";
 import { useT, useTn } from "../state/LangContext";
 import { aiStatus, createFolder, deleteFolder, moveFolder, renameFolder, reorderFolder } from "../ipc/commands";
 import type { FolderNode } from "../ipc/types";
+import { errorMessage } from "../lib/errors";
 import OrganizeUnfiledModal from "./OrganizeUnfiledModal";
 import "./ManageFolders.css";
 
@@ -118,7 +119,7 @@ function FolderRow({
   depth: number;
   dragId: string | null;
   dropPos: DropPos | null;
-  onRename: (id: string, name: string) => void;
+  onRename: (id: string, name: string) => Promise<boolean>;
   onDelete: (id: string) => void;
   onGripDragStart: (ev: DragEvent<HTMLSpanElement>, node: FolderNode) => void;
   onRowDragEnd: () => void;
@@ -134,8 +135,11 @@ function FolderRow({
 
   function commit() {
     const trimmed = name.trim();
-    if (trimmed && trimmed !== node.name) onRename(node.id, trimmed);
-    else setName(node.name);
+    if (trimmed && trimmed !== node.name) {
+      void onRename(node.id, trimmed).then((ok) => {
+        if (!ok) setName(node.name);
+      });
+    } else setName(node.name);
   }
 
   const count = node.entry_count;
@@ -224,6 +228,7 @@ export function ManageFolders() {
   const [newName, setNewName] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [aiOn, setAiOn] = useState(false);
   const [organizing, setOrganizing] = useState(false);
   const dragIdRef = useRef<string | null>(null);
@@ -250,12 +255,16 @@ export function ManageFolders() {
     };
   }, []);
 
-  async function handleRename(id: string, name: string) {
+  async function handleRename(id: string, name: string): Promise<boolean> {
+    setRenameError(null);
     try {
       await renameFolder(id, name);
       await refreshFolders();
+      return true;
     } catch (e) {
       console.error("rename_folder failed:", e);
+      setRenameError(errorMessage(e, t));
+      return false;
     }
   }
 
@@ -310,30 +319,41 @@ export function ManageFolders() {
     }
   }
 
+  // Fires after a real drop (state already committed by onRowDrop) and after a
+  // cancelled drag (Esc, drop outside the list); only the latter has state left.
   function onRowDragEnd() {
-    void commitMove();
+    dragIdRef.current = null;
+    dropRef.current = null;
+    setDragId(null);
+    setDrop(null);
   }
 
-  function onRowDragOver(ev: DragEvent<HTMLDivElement>, node: FolderNode) {
-    ev.preventDefault();
-    if (!dragId || dragId === node.id || isDescendant(folders, dragId, node.id)) {
-      dropRef.current = null;
-      setDrop(null);
-      return;
+  function dropTargetAt(ev: DragEvent<HTMLDivElement>, node: FolderNode): DropTarget | null {
+    if (!dragIdRef.current || dragIdRef.current === node.id || isDescendant(folders, dragIdRef.current, node.id)) {
+      return null;
     }
     const rect = ev.currentTarget.getBoundingClientRect();
     const y = (ev.clientY - rect.top) / rect.height;
     const pos: DropPos = node.id === "root" ? "inside" : y < 0.28 ? "before" : y > 0.72 ? "after" : "inside";
-    dropRef.current = { id: node.id, pos };
-    setDrop({ id: node.id, pos });
+    return { id: node.id, pos };
+  }
+
+  function onRowDragOver(ev: DragEvent<HTMLDivElement>, node: FolderNode) {
+    ev.preventDefault();
+    const target = dropTargetAt(ev, node);
+    dropRef.current = target;
+    setDrop(target);
   }
 
   function onRowDragLeave(node: FolderNode) {
+    if (dropRef.current?.id === node.id) dropRef.current = null;
     setDrop((prev) => (prev && prev.id === node.id ? null : prev));
   }
 
-  async function onRowDrop(ev: DragEvent<HTMLDivElement>, _node: FolderNode) {
+  async function onRowDrop(ev: DragEvent<HTMLDivElement>, node: FolderNode) {
     ev.preventDefault();
+    // Recompute: dragleave may have cleared the ref just before the drop.
+    dropRef.current = dropTargetAt(ev, node);
     void commitMove();
   }
 
@@ -355,6 +375,11 @@ export function ManageFolders() {
           </button>
         )}
 
+        {renameError && (
+          <p className="kv-error kv-manage-error" role="alert">
+            {renameError}
+          </p>
+        )}
         <div className="kv-card">
           {rows.map(({ node, depth }) => (
             <FolderRow
