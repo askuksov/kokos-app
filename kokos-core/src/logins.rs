@@ -65,6 +65,8 @@ const SQL: &str = "SELECT e.id, e.title,
     AND ef.value IS NOT NULL AND ef.value != ''
   ORDER BY e.title COLLATE NOCASE ASC";
 
+/// A stored URL matches when it is on the same site as `url` and the match
+/// is not an https-to-http downgrade (`url_match::fill_allowed`).
 pub fn for_url(conn: &Connection, url: &str, limit: usize) -> Result<Vec<LoginMatch>> {
     let Some(req_host) = url_match::host_of(url) else {
         return Ok(Vec::new());
@@ -75,7 +77,7 @@ pub fn for_url(conn: &Connection, url: &str, limit: usize) -> Result<Vec<LoginMa
     let mut out: Vec<LoginMatch> = Vec::new();
     while let Some(r) = rows.next()? {
         let stored: String = r.get(4)?;
-        if !url_match::same_site(&stored, &req_host) {
+        if !url_match::fill_allowed(&stored, url) {
             continue;
         }
         let exact = url_match::host_of(&stored)
@@ -545,6 +547,80 @@ mod tests {
                 mine.username, None,
                 "[{label}] a protected email must be withheld, not exposed by the fallback"
             );
+        }
+    }
+
+    #[test]
+    fn an_https_login_is_not_offered_on_an_http_page() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "s-1", "Bank", 0);
+            seed_field(
+                &conn,
+                "sf-1",
+                "s-1",
+                "URL",
+                "https://bank.example/login",
+                "url",
+                Some("tpl_url"),
+            );
+            seed_entry(&conn, "s-2", "Bank bare", 0);
+            seed_field(
+                &conn,
+                "sf-2",
+                "s-2",
+                "URL",
+                "bank.example",
+                "url",
+                Some("tpl_url"),
+            );
+            seed_entry(&conn, "s-3", "Bank legacy", 0);
+            seed_field(
+                &conn,
+                "sf-3",
+                "s-3",
+                "URL",
+                "http://bank.example",
+                "url",
+                Some("tpl_url"),
+            );
+
+            let ids = |page: &str| -> Vec<String> {
+                let mut v: Vec<String> = for_url(&conn, page, 50)
+                    .unwrap()
+                    .into_iter()
+                    .map(|m| m.id)
+                    .collect();
+                v.sort();
+                v
+            };
+            assert_eq!(
+                ids("http://bank.example/login"),
+                vec!["s-3".to_string()],
+                "[{label}] only the http-stored login on an http page; https and schemeless are excluded"
+            );
+            assert_eq!(
+                ids("https://bank.example/login"),
+                vec!["s-1".to_string(), "s-2".to_string(), "s-3".to_string()],
+                "[{label}] an https page takes https, schemeless and http-stored logins"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_pages_are_exempt_from_the_scheme_rule() {
+        for (label, conn) in both_dbs() {
+            seed_entry(&conn, "lo-1", "Dev server", 0);
+            seed_field(
+                &conn,
+                "lof-1",
+                "lo-1",
+                "URL",
+                "https://localhost:3000",
+                "url",
+                Some("tpl_url"),
+            );
+            let hits = for_url(&conn, "http://localhost:3000/login", 50).unwrap();
+            assert_eq!(hits.len(), 1, "[{label}] localhost over http still fills");
         }
     }
 }

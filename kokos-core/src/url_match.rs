@@ -96,6 +96,60 @@ pub fn same_site(a: &str, b: &str) -> bool {
     }
 }
 
+/// Lowercased scheme of `url`, or `None` for a bare host (no `://`).
+fn scheme_of(url: &str) -> Option<String> {
+    url.trim()
+        .split_once("://")
+        .map(|(scheme, _)| scheme.to_ascii_lowercase())
+}
+
+/// True only for an explicit `https://` or `wss://` URL. A bare host is NOT
+/// secure here: this answers "was this page served over TLS?", and a page URL
+/// without a scheme proves nothing, so it fails closed.
+pub fn is_secure_scheme(url: &str) -> bool {
+    matches!(scheme_of(url).as_deref(), Some("https" | "wss"))
+}
+
+/// `localhost`, `*.localhost`, `127.0.0.0/8` and `[::1]`: traffic that never
+/// leaves the machine, so plain http there exposes nothing to the network.
+pub fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if h == "localhost" || h.ends_with(".localhost") || h == "[::1]" {
+        return true;
+    }
+    let octets: Vec<&str> = h.split('.').collect();
+    octets.len() == 4
+        && octets[0] == "127"
+        && octets
+            .iter()
+            .all(|o| !o.is_empty() && o.parse::<u8>().is_ok())
+}
+
+/// True when no stored scheme can be a downgrade for `page`: it is served
+/// over TLS, or it is a loopback host.
+pub fn page_accepts_any_scheme(page: &str) -> bool {
+    is_secure_scheme(page) || host_of(page).is_some_and(|h| is_loopback_host(&h))
+}
+
+/// Scheme half of the fill rule: may a credential stored under `stored` be
+/// offered on `page`? Upgrades (http stored, https page) are allowed;
+/// downgrades (https stored, plain-http page) are not, since anyone on the
+/// network path of the http page could read what gets filled. A stored value
+/// without a scheme counts as https: a bare `bank.com` most likely means the
+/// real, TLS-served site, and a downgrade must not slip through just because
+/// the scheme was never typed. Loopback pages are exempt.
+pub fn scheme_allows(stored: &str, page: &str) -> bool {
+    if page_accepts_any_scheme(page) {
+        return true;
+    }
+    matches!(scheme_of(stored).as_deref(), Some("http" | "ws"))
+}
+
+/// The full autofill gate: same site AND no https-to-http downgrade.
+pub fn fill_allowed(stored: &str, page: &str) -> bool {
+    same_site(stored, page) && scheme_allows(stored, page)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +294,76 @@ mod tests {
             "separate sites under a public suffix"
         );
         assert!(!same_site("https://example.com", "garbage"));
+    }
+
+    #[test]
+    fn https_stored_is_not_offered_on_an_http_page() {
+        assert!(!fill_allowed(
+            "https://bank.com/login",
+            "http://bank.com/login"
+        ));
+        assert!(!fill_allowed("https://bank.com", "http://www.bank.com/"));
+        assert!(!fill_allowed("wss://bank.com", "http://bank.com"));
+        assert!(fill_allowed("https://bank.com", "https://www.bank.com/"));
+    }
+
+    #[test]
+    fn http_stored_is_offered_on_both_http_and_https_pages() {
+        assert!(fill_allowed(
+            "http://intranet.example.com",
+            "https://intranet.example.com"
+        ));
+        assert!(fill_allowed(
+            "http://intranet.example.com",
+            "http://intranet.example.com/x"
+        ));
+        assert!(fill_allowed(
+            "HTTP://Intranet.Example.com",
+            "http://intranet.example.com"
+        ));
+    }
+
+    #[test]
+    fn a_schemeless_stored_value_counts_as_https() {
+        assert!(fill_allowed("bank.com", "https://bank.com"));
+        assert!(
+            !fill_allowed("bank.com", "http://bank.com"),
+            "a bare host must not open a downgrade path"
+        );
+    }
+
+    #[test]
+    fn loopback_pages_ignore_the_scheme_rule() {
+        for page in [
+            "http://localhost:3000/login",
+            "http://app.localhost/",
+            "http://127.0.0.1:8080/",
+            "http://[::1]:8080/",
+        ] {
+            let host = host_of(page).unwrap();
+            assert!(is_loopback_host(&host), "{page}");
+            assert!(scheme_allows("https://whatever", page), "{page}");
+        }
+        assert!(fill_allowed(
+            "https://localhost:3000",
+            "http://localhost:3000/"
+        ));
+        assert!(fill_allowed("localhost", "http://localhost:3000/"));
+        assert!(fill_allowed("https://127.0.0.1", "http://127.0.0.1:8080/"));
+        assert!(!is_loopback_host("127.0.0.1.evil.com"));
+        assert!(!is_loopback_host("localhost.evil.com"));
+        assert!(!is_loopback_host("128.0.0.1"));
+    }
+
+    #[test]
+    fn is_secure_scheme_needs_an_explicit_tls_scheme() {
+        assert!(is_secure_scheme("https://example.com"));
+        assert!(is_secure_scheme("HTTPS://example.com"));
+        assert!(is_secure_scheme("wss://example.com"));
+        assert!(!is_secure_scheme("http://example.com"));
+        assert!(
+            !is_secure_scheme("example.com"),
+            "a bare page url proves nothing"
+        );
     }
 }

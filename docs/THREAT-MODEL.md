@@ -145,6 +145,11 @@ and the access-control primitives it can use differ.
   list (`kokos-core/src/url_match.rs::etld_plus_one`/`same_site`) — it is not a "last two labels" heuristic (handles `co.uk`, `github.io`
   correctly per its own tests) and that it treats a backslash as an
   authority terminator (blocks a `evil.com\@example.com` userinfo spoof).
+- No scheme downgrade (`url_match::fill_allowed`): a login stored for
+  `https://` (or stored without a scheme) is never offered or released on a
+  plain-`http://` page of the same site; an `http://` login may still fill
+  on `https://`. Loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`,
+  `[::1]`) are exempt.
 - Per-site grants: `kokos-core/src/nmh_grants.rs` is the **persistent**
   tier (`origin`, `domain`) surviving app restart, keyed by exact
   `(origin, domain)` — a different origin on the same domain does
@@ -402,7 +407,7 @@ consumers.
 | Crafted `.kokos` KDF cost bomb (DoS on open) | Crypto core / file format | Low likelihood (victim must open a hostile file) / low (transient hang, not compromise) | Open-time ceiling rejects an unauthenticated header asking for >256 MiB or >10 iterations *before* Argon2 runs (`Argon2Params::within_open_budget`), distinct from `validate()`'s wider create-time bounds (kept compatible with the reference implementation) | Mitigated |
 | Nonce reuse (AEAD) | Crypto core | Very low / high (nonce reuse breaks XChaCha20-Poly1305 confidentiality) | Fresh random 24-byte nonce generated on every `save`/`change_password`, never reused or derived | Mitigated |
 | Secret in logs/Debug output | Crypto core, KDBX parser, sync | Low / high | Hand-written redacting `Debug` impls on `OpenVault`, `PendingRestore`, `KdbxEntry`, `KdbxField`; TOTP/NMH host explicitly never logs | Mitigated |
-| Phishing via loose domain match | NMH | Medium / medium | Strict eTLD+1 equality (public suffix list), not a "last two labels" heuristic; backslash-authority spoof blocked | Mitigated |
+| Phishing via loose domain match | NMH | Medium / medium | Strict eTLD+1 equality (public suffix list), not a "last two labels" heuristic; backslash-authority spoof blocked; no https-to-http downgrade | Mitigated |
 | Malicious extension origin spoof | NMH | Medium / high | Origin comes from the browser's launch args, not the extension's messages; canonicalized whitelist compare closes the trailing-path impersonation gap | Mitigated |
 | Malicious import file crash/DoS | Untrusted-input parsers | Medium / low (crash, not compromise) | `catch_unwind` around the KeePass parser; bounds-checked header reader; guarded TOTP math (no div-by-zero/overflow panics) | Mitigated |
 | Cross-vault leak (multivault) | Multivault isolation | Low / medium | Per-id `SessionRegistry` keyed by canonical path; fail-closed `resolve()` on unknown id | Mitigated (partially verified — see boundary 6 residual note) |
