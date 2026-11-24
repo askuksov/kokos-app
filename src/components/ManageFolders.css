@@ -50,6 +50,11 @@
   cursor: default;
 }
 
+.kv-settings .kv-manage-error {
+  text-align: left;
+  margin: 0 2px 10px;
+}
+
 .kv-manage-row {
   display: flex;
   align-items: center;
