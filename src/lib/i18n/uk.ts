@@ -618,6 +618,10 @@ export const uk: Record<string, string> = {
   "editor.suggestFolders": "Тека",
   "editor.suggestTags": "Теги",
   "editor.suggestApply": "Застосувати {name}",
+  "editor.discardTitle": "Скасувати зміни?",
+  "editor.discardBody": "У записі є незбережені зміни. Якщо піти зараз, їх буде втрачено.",
+  "editor.discardConfirm": "Скасувати зміни",
+  "editor.keepEditing": "Продовжити редагування",
 
   "trash.title": "Кошик",
   "trash.subtitle": "Відновлюйте видалені записи або видаляйте їх назавжди.",
