@@ -477,6 +477,11 @@ export const en: Record<string, string> = {
   "restore.unlockBlurb": "Enter this vault's master password to finish restoring it.",
   "restore.passwordPlaceholder": "Master password",
   "restore.unlockButton": "Unlock & finish",
+  "restore.needsKeyfile": "This vault needs a key file. Choose it to finish restoring.",
+  "restore.bindFailedTitle": "Google Drive sync isn't connected",
+  "restore.bindFailedHint": "The vault was restored and unlocked, but connecting it to Google Drive failed, and the restore can't retry it. To turn sync on, open Settings → Sync, choose Google Drive and click Connect. It uses the same remote name the restore would have set.",
+  "restore.bindFailedOpenSync": "Open sync settings",
+  "restore.bindFailedLater": "Later",
 
   "folders.title": "Folders",
   "folders.subtitle": "Drag a folder by its handle to reorder it among its siblings, or onto another folder to nest it. Everything lives inside Root.",
