@@ -33,12 +33,17 @@ const DEFAULTS: Settings = {
 
 const Ctx = createContext<{
   settings: Settings;
+  /** Never rejects: a failed write rolls back and raises `saveFailed`. */
   update: (p: Partial<Settings>) => Promise<void>;
+  /** The last settings write was rejected by the backend. */
+  saveFailed: boolean;
+  dismissSaveFailed: () => void;
   refresh: () => Promise<void>;
 } | null>(null);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setS] = useState<Settings | null>(null);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   const settingsRef = useRef<Settings | null>(null);
   useEffect(() => {
@@ -65,12 +70,19 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         base = settingsRef.current ?? DEFAULTS;
       }
       const next = { ...base, ...p };
+      let committed: Settings;
       try {
         await setSettings(next);
-      } catch {
+        // The backend sanitizes the ids and keeps its own fields, so read back what it stored.
+        committed = await getSettings().catch(() => next);
+        setSaveFailed(false);
+      } catch (e) {
+        console.error("set_settings failed:", e);
+        committed = base;
+        setSaveFailed(true);
       }
-      setS(next);
-      settingsRef.current = next;
+      setS(committed);
+      settingsRef.current = committed;
     });
     writeChain.current = done;
     await done;
@@ -89,8 +101,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     await done;
   }, []);
 
+  const dismissSaveFailed = useCallback(() => setSaveFailed(false), []);
+
   if (!settings) return null;
-  return <Ctx.Provider value={{ settings, update, refresh }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ settings, update, saveFailed, dismissSaveFailed, refresh }}>{children}</Ctx.Provider>
+  );
 }
 
 export const useSettings = () => {

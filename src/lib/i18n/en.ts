@@ -564,6 +564,7 @@ export const en: Record<string, string> = {
   "saveError.retry": "Retry",
   "saveError.retrying": "Retrying…",
   "saveError.dismiss": "Dismiss",
+  "settings.saveFailed": "Couldn't save the settings — the change was reverted.",
 
   "editor.editEntryTitle": "Edit entry",
   "editor.newEntryTitle": "New entry",
