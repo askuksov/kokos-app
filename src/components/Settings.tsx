@@ -671,7 +671,14 @@ export function Settings() {
       const finalPw = kfNewPw || kfCurPw;
 
       try {
-        await changeMasterPassword(finalPw, null, action, targetVaultId);
+        await changeMasterPassword(
+          kfCurPw,
+          requiresKeyfile ? kfCurKeyfile : null,
+          finalPw,
+          null,
+          action,
+          targetVaultId,
+        );
       } catch (err) {
         setKfError(String(err));
         return;
@@ -746,7 +753,14 @@ export function Settings() {
         ? { kind: "resupply", path: mpCurKeyfile! }
         : { kind: "keep" };
       try {
-        await changeMasterPassword(mpNewPw, null, action, targetVaultId);
+        await changeMasterPassword(
+          mpCurPw,
+          requiresKeyfile ? mpCurKeyfile : null,
+          mpNewPw,
+          null,
+          action,
+          targetVaultId,
+        );
       } catch (err) {
         setMpError(String(err));
         return;
