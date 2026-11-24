@@ -360,12 +360,11 @@ fn ensure_not_superseded(state: &AppState, epoch: u64) -> CmdResult<()> {
 
 /// Wipes a vault whose unlock lost the race after its "unlock" audit row was
 /// saved: pairs that row with a "lock" one, like a lock-all would have, then
-/// drops the vault and its key. `save_opened` keeps the sync revision, since
-/// an audit row is not a content change.
+/// drops the vault and its key. `save_with_audit` keeps the sync revision,
+/// since an audit row is not a content change.
 async fn discard_superseded(mut v: vault::OpenVault) -> String {
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        let _ = kokos_core::audit::append(&v.conn, "lock", None);
-        let _ = vault::save_opened(&mut v);
+        let _ = vault::save_with_audit(&mut v, "lock", None);
     })
     .await;
     UNLOCK_SUPERSEDED.to_string()
@@ -809,10 +808,15 @@ pub async fn save_vault(state: State<'_, AppState>, vault_id: Option<String>) ->
 /// save is the same heavy serialize+encrypt+2-fsync as `save_vault`, so it
 /// runs in `spawn_blocking` via the same begin_borrow/end_borrow hand-off.
 ///
+/// The row is written with `save_with_audit`, which keeps the sync revision:
+/// every edit command saves (and bumps the revision) itself, so a lock only
+/// pushes edits that are still unsynced, and never makes a stale local copy
+/// win LWW over a newer remote one.
+///
 /// If the vault is on loan to another in-flight `spawn_blocking` mutation,
 /// `begin_borrow` returns `None` -- that window is rare (kokos_core::session
-/// doc), and there is nothing to audit here, so this just requests the lock,
-/// which `end_borrow` honors once the other call finishes.
+/// doc), so this just requests the lock, and `end_borrow` writes the audit
+/// row once the other call finishes.
 #[tauri::command]
 pub async fn lock_vault(
     app: tauri::AppHandle,
@@ -835,8 +839,7 @@ pub async fn lock_vault(
         let target = id.clone().expect("borrowed is only Some when id is Some");
         let app_g = app.clone();
         let (v, push_inputs) = tauri::async_runtime::spawn_blocking(move || {
-            let _ = kokos_core::audit::append(&v.conn, "lock", None);
-            let _ = vault::save(&mut v);
+            let _ = vault::save_with_audit(&mut v, "lock", None);
             let pi = gather_gdrive_auto_push(&app_g, &v);
             (v, pi)
         })
@@ -845,8 +848,8 @@ pub async fn lock_vault(
         {
             let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
             if let Some(s) = reg.get_mut(&target) {
-                s.end_borrow(v);
-                s.lock();
+                // The row is already written: drop the vault without another save.
+                s.end_borrow_and_lock(v);
             }
         }
         crate::nmh::invalidate_confirms(&app);
@@ -879,8 +882,9 @@ pub fn lock_all(app: tauri::AppHandle) -> CmdResult<()> {
     lock_all_sessions(&app)
 }
 
-/// Audit + save + lock every open vault, then tell the WebView and drop the
-/// pending extension confirms. Shared by `lock_all`, the idle-lock watcher,
+/// Audit + save (`save_with_audit`, no revision bump; see `lock_vault`) + lock
+/// every open vault, then tell the WebView and drop the pending extension
+/// confirms. Shared by `lock_all`, the idle-lock watcher,
 /// and the tray (Lock All, hide-to-tray with `lock_on_close`). Does blocking
 /// I/O: call it off the main thread.
 pub(crate) fn lock_all_sessions(app: &tauri::AppHandle) -> CmdResult<()> {
@@ -889,8 +893,7 @@ pub(crate) fn lock_all_sessions(app: &tauri::AppHandle) -> CmdResult<()> {
     let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
     for s in reg.iter_mut() {
         if let Some(v) = s.vault.as_mut() {
-            let _ = kokos_core::audit::append(&v.conn, "lock", None);
-            let _ = vault::save(v);
+            let _ = vault::save_with_audit(v, "lock", None);
         }
     }
     reg.lock_all();
@@ -6237,13 +6240,16 @@ pub async fn sync_now(app: tauri::AppHandle, state: State<'_, AppState>, vault_i
                     Err(e) => Err(e),
                 };
             };
-            s.end_borrow(v);
+            // A pull replaced the file: the borrowed copy is stale and must not be
+            // written back, not even by a lock requested meanwhile.
+            let locked = matches!(&synced, Ok(o) if o.requires_reopen);
+            if locked {
+                s.end_borrow_and_lock(v);
+            } else {
+                s.end_borrow(v);
+            }
             match synced {
                 Ok(outcome) => {
-                    let locked = outcome.requires_reopen;
-                    if locked {
-                        s.lock();
-                    }
                     drop(reg);
                     if locked {
                         crate::nmh::invalidate_confirms(&app);
