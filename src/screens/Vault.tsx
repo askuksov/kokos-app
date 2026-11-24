@@ -22,7 +22,6 @@ import { useHotkeys } from "../hooks/useHotkeys";
 import { useSyncStatus } from "../lib/useSyncStatus";
 import { useOnboarding } from "../lib/useOnboarding";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { VAULT_LOCKED, TRAY_OPEN_SETTINGS } from "../lib/events";
 import { takeTraySettingsRequest } from "../lib/traySettings";
 import { clearClipboard } from "../lib/clipboard";
@@ -146,15 +145,6 @@ export function VaultScreen() {
       un.then((f) => f());
     };
   }, [vaultId, openSettingsFromTray]);
-
-  useEffect(() => {
-    const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (!focused && settings.lock_on_blur) void onLock();
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, [settings.lock_on_blur, onLock]);
 
   return (
     <div

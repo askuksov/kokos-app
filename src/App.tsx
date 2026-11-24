@@ -1,7 +1,9 @@
+import { useEffect, useRef } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { VaultProvider } from "./state/VaultContext";
-import { SettingsProvider } from "./state/SettingsContext";
+import { SettingsProvider, useSettings } from "./state/SettingsContext";
 import { LangProvider } from "./state/LangContext";
-import { ClipboardProvider } from "./state/ClipboardContext";
+import { ClipboardProvider, useClipboard } from "./state/ClipboardContext";
 import { TextImportProvider } from "./state/TextImportContext";
 import { TabsProvider, useTabs } from "./state/TabsContext";
 import { WelcomeScreen } from "./screens/Welcome";
@@ -11,6 +13,34 @@ import { NmhConfirm } from "./components/NmhConfirm";
 import { NmhUnlock } from "./components/NmhUnlock";
 import { TrayIntro } from "./components/TrayIntro";
 import { Topbar } from "./components/Topbar";
+import { lockAll } from "./ipc/commands";
+import { clearClipboard } from "./lib/clipboard";
+
+/// "Lock when the window loses focus" locks every unlocked vault, not just
+/// the one on screen: background tabs and a tab hidden behind the lock or
+/// welcome screen would otherwise stay open.
+function LockOnBlur() {
+  const { settings } = useSettings();
+  const { tabs } = useTabs();
+  const { reset: resetClipboard } = useClipboard();
+  const anyUnlocked = tabs.some((t) => !t.locked);
+  const stateRef = useRef({ enabled: settings.lock_on_blur, anyUnlocked, resetClipboard });
+  stateRef.current = { enabled: settings.lock_on_blur, anyUnlocked, resetClipboard };
+
+  useEffect(() => {
+    const un = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      const s = stateRef.current;
+      if (focused || !s.enabled || !s.anyUnlocked) return;
+      void clearClipboard();
+      s.resetClipboard();
+      lockAll().catch((e) => console.error("lock_all failed:", e));
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+  return null;
+}
 
 
 function TabsBody() {
@@ -62,6 +92,7 @@ export default function App() {
         <ClipboardProvider>
           <TabsProvider>
             <Shell />
+            <LockOnBlur />
             <NmhConfirm />
             <NmhUnlock />
             <TrayIntro />
