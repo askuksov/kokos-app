@@ -723,6 +723,10 @@ pub fn audit_event_in(app: &tauri::AppHandle, vault_id: &str, event: &str, detai
 /// | false | yes | true  | true      |
 /// | false | yes | false | false     |
 ///
+/// Every `m` above also requires that the match is not an https-to-http
+/// downgrade (`url_match::fill_allowed`): an entry stored for https (or with
+/// no scheme) never anchors a plain-http page, except on loopback hosts.
+///
 /// The real gate against a compromised-but-whitelisted extension remains the
 /// human confirmation (`confirm`), not this function — this only prevents an
 /// attacker from choosing which domain the human is shown and which domain
@@ -733,17 +737,26 @@ pub fn anchored(
     url: Option<&str>,
     entry_urls: &[String],
 ) -> bool {
+    let fill_allowed = |u: &str| {
+        entry_urls
+            .iter()
+            .any(|stored| kokos_core::url_match::fill_allowed(stored, u))
+    };
     if scope.candidate_ids.iter().any(|id| id == entry_id) {
         return match (url, scope.last_domain.as_deref()) {
             (None, _) => true,
-            (Some(u), Some(d)) => kokos_core::url_match::same_site(d, u),
+            // `last_domain` carries no scheme, so on a page that would be a
+            // downgrade target the entry's own URLs must allow it too: an
+            // entry offered on https must not be released on its http twin.
+            (Some(u), Some(d)) => {
+                kokos_core::url_match::same_site(d, u)
+                    && (kokos_core::url_match::page_accepts_any_scheme(u) || fill_allowed(u))
+            }
             (Some(_), None) => false,
         };
     }
     match url {
-        Some(u) => entry_urls
-            .iter()
-            .any(|stored| kokos_core::url_match::same_site(stored, u)),
+        Some(u) => fill_allowed(u),
         None => false,
     }
 }
@@ -3175,6 +3188,65 @@ mod anchor_tests {
             !anchored(&s, "e1", Some("https://evil.co.uk"), &urls),
             "this is exactly why psl (not last-two-labels) is used"
         );
+    }
+
+    #[test]
+    fn an_https_entry_does_not_anchor_an_http_page() {
+        let s = ConnScope::default();
+        let urls = vec!["https://bank.com/login".to_string()];
+        assert!(!anchored(&s, "e1", Some("http://bank.com/login"), &urls));
+        assert!(anchored(&s, "e1", Some("https://bank.com/login"), &urls));
+
+        let bare = vec!["bank.com".to_string()];
+        assert!(
+            !anchored(&s, "e1", Some("http://bank.com/login"), &bare),
+            "a schemeless stored url counts as https"
+        );
+    }
+
+    #[test]
+    fn an_http_entry_anchors_both_http_and_https_pages() {
+        let s = ConnScope::default();
+        let urls = vec!["http://intranet.example.com".to_string()];
+        assert!(anchored(
+            &s,
+            "e1",
+            Some("http://intranet.example.com/x"),
+            &urls
+        ));
+        assert!(anchored(
+            &s,
+            "e1",
+            Some("https://intranet.example.com/x"),
+            &urls
+        ));
+    }
+
+    #[test]
+    fn a_candidate_offered_on_https_is_not_released_on_its_http_twin() {
+        let s = scope_with(&["e1"], "bank.com");
+        let urls = vec!["https://bank.com".to_string()];
+        assert!(anchored(&s, "e1", Some("https://bank.com/login"), &urls));
+        assert!(
+            !anchored(&s, "e1", Some("http://bank.com/login"), &urls),
+            "candidacy carries no scheme, so the entry's own urls must allow http"
+        );
+        let legacy = vec!["http://bank.com".to_string()];
+        assert!(anchored(&s, "e1", Some("http://bank.com/login"), &legacy));
+    }
+
+    #[test]
+    fn loopback_pages_anchor_regardless_of_scheme() {
+        let s = ConnScope::default();
+        let urls = vec!["https://localhost:3000".to_string()];
+        assert!(anchored(
+            &s,
+            "e1",
+            Some("http://localhost:3000/login"),
+            &urls
+        ));
+        let c = scope_with(&["e1"], "localhost");
+        assert!(anchored(&c, "e1", Some("http://localhost:3000/login"), &[]));
     }
 
     #[test]
