@@ -125,10 +125,29 @@ pub fn is_loopback_host(host: &str) -> bool {
             .all(|o| !o.is_empty() && o.parse::<u8>().is_ok())
 }
 
+/// A private-network IP literal: IPv4 `10/8`, `172.16/12`, `192.168/16`,
+/// link-local `169.254/16`, IPv6 unique-local `fc00::/7` and link-local
+/// `fe80::/10`. Routers, NAS boxes and printers live there and almost never
+/// serve TLS; only someone already on the local network could read their
+/// plain-http traffic. Host names are not covered, only literal addresses.
+pub fn is_private_lan_host(host: &str) -> bool {
+    let h = host.trim().trim_end_matches('.');
+    if let Ok(v4) = h.parse::<std::net::Ipv4Addr>() {
+        return v4.is_private() || v4.is_link_local();
+    }
+    let inner = h.strip_prefix('[').and_then(|x| x.strip_suffix(']')).unwrap_or(h);
+    if let Ok(v6) = inner.parse::<std::net::Ipv6Addr>() {
+        let first = v6.segments()[0];
+        return (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80;
+    }
+    false
+}
+
 /// True when no stored scheme can be a downgrade for `page`: it is served
-/// over TLS, or it is a loopback host.
+/// over TLS, or its host is loopback or a private-network IP literal.
 pub fn page_accepts_any_scheme(page: &str) -> bool {
-    is_secure_scheme(page) || host_of(page).is_some_and(|h| is_loopback_host(&h))
+    is_secure_scheme(page)
+        || host_of(page).is_some_and(|h| is_loopback_host(&h) || is_private_lan_host(&h))
 }
 
 /// Scheme half of the fill rule: may a credential stored under `stored` be
@@ -137,7 +156,8 @@ pub fn page_accepts_any_scheme(page: &str) -> bool {
 /// network path of the http page could read what gets filled. A stored value
 /// without a scheme counts as https: a bare `bank.com` most likely means the
 /// real, TLS-served site, and a downgrade must not slip through just because
-/// the scheme was never typed. Loopback pages are exempt.
+/// the scheme was never typed. Loopback and private-network IP pages are
+/// exempt.
 pub fn scheme_allows(stored: &str, page: &str) -> bool {
     if page_accepts_any_scheme(page) {
         return true;
@@ -353,6 +373,27 @@ mod tests {
         assert!(!is_loopback_host("127.0.0.1.evil.com"));
         assert!(!is_loopback_host("localhost.evil.com"));
         assert!(!is_loopback_host("128.0.0.1"));
+    }
+
+    #[test]
+    fn private_lan_ip_pages_accept_any_stored_scheme() {
+        assert!(is_private_lan_host("192.168.50.163"));
+        assert!(is_private_lan_host("10.0.0.1"));
+        assert!(is_private_lan_host("172.16.0.1"));
+        assert!(is_private_lan_host("172.31.255.254"));
+        assert!(is_private_lan_host("169.254.1.1"));
+        assert!(is_private_lan_host("[fd12:3456::1]"));
+        assert!(is_private_lan_host("[fe80::1]"));
+        assert!(!is_private_lan_host("172.32.0.1"));
+        assert!(!is_private_lan_host("8.8.8.8"));
+        assert!(!is_private_lan_host("192.168.1.1.evil.com"));
+        assert!(!is_private_lan_host("router.local"));
+        assert!(!is_private_lan_host("[2001:db8::1]"));
+        // A bare or https-stored router login still fills on its plain-http page.
+        assert!(fill_allowed("192.168.50.163", "http://192.168.50.163/login"));
+        assert!(fill_allowed("https://192.168.50.163", "http://192.168.50.163/"));
+        // Public hosts keep the no-downgrade rule.
+        assert!(!fill_allowed("https://bank.com", "http://bank.com/"));
     }
 
     #[test]
