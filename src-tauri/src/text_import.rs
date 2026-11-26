@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use kokos_ai::text_import::engine::gen::GenExtractor;
 use kokos_ai::text_import::engine::pipeline::analyze_text_with_progress;
 use kokos_ai::text_import::engine::registry::resolve_gen;
-use kokos_ai::text_import::model::{ImportProposal, ProposedEntry};
+use kokos_ai::text_import::model::{ImportProposal, ProposedEntry, Span};
 use kokos_ai::text_import::preparse::split_blocks;
 use kokos_ai::AiError;
 use zeroize::Zeroize;
@@ -477,14 +477,15 @@ fn floor_boundary(s: &str, max: usize) -> usize {
 /// Raw-source preview for one entry: the blank-line-delimited block of `text`
 /// that contains the entry's first field value (the same `split_blocks` the
 /// pipeline uses, so whitespace-only and `\r\n` blank lines separate blocks
-/// too), falling back to the head of the file. Always bounded by
+/// too), falling back to the head of the file. `blocks` is `split_blocks(text)`,
+/// computed once per file by the caller. Always bounded by
 /// `MAX_SOURCE_PREVIEW_BYTES`, so memory is entries x constant, not entries x file.
-fn source_preview(text: &str, e: &ProposedEntry) -> String {
+fn source_preview(text: &str, blocks: &[Span], e: &ProposedEntry) -> String {
     let hit = e.fields.iter().map(|f| f.value.as_str()).find(|v| !v.is_empty()).and_then(|v| text.find(v));
     let (start, end) = match hit {
-        Some(pos) => split_blocks(text)
-            .into_iter()
-            .find(|b| pos < b.end)
+        // Blocks are in source order: the first one ending after the hit.
+        Some(pos) => blocks
+            .get(blocks.partition_point(|b| b.end <= pos))
             .map_or((0, text.len()), |b| (b.start.min(pos), b.end)),
         None => (0, text.len()),
     };
@@ -525,9 +526,10 @@ fn cap_entries(p: &mut ImportProposal, max: usize) -> usize {
 /// (the audit records counts, not names/paths/contents). Pure — unit-tested.
 fn stamp_source(mut p: ImportProposal, path: &Path, text: &str) -> ImportProposal {
     let sf = path.display().to_string();
+    let blocks = split_blocks(text);
     for e in &mut p.entries {
         e.source_file = Some(sf.clone());
-        e.source_text = Some(source_preview(text, e));
+        e.source_text = Some(source_preview(text, &blocks, e));
     }
     for b in &mut p.unparsed {
         b.source_file = Some(sf.clone());
@@ -937,9 +939,9 @@ mod tests {
     fn source_preview_is_the_entry_block_and_bounded() {
         let e = one(EntryKind::Login, "b-secret").entries.remove(0);
         let text = format!("a: 1\n\nuser: x\nb-secret\n\nc: 3{}", "z".repeat(20_000));
-        assert_eq!(source_preview(&text, &e), "user: x\nb-secret");
+        assert_eq!(source_preview(&text, &split_blocks(&text), &e), "user: x\nb-secret");
         let big = format!("b-secret{}", "é".repeat(20_000));
-        let p = source_preview(&big, &e);
+        let p = source_preview(&big, &split_blocks(&big), &e);
         assert!(p.len() <= MAX_SOURCE_PREVIEW_BYTES);
     }
 
@@ -947,7 +949,7 @@ mod tests {
     fn source_preview_splits_crlf_files_on_blank_lines() {
         let e = one(EntryKind::Login, "b-secret").entries.remove(0);
         let text = "a: 1\r\nother-secret\r\n\r\nuser: x\r\nb-secret\r\n \r\nc: 3\r\n";
-        assert_eq!(source_preview(text, &e), "user: x\r\nb-secret");
+        assert_eq!(source_preview(text, &split_blocks(text), &e), "user: x\r\nb-secret");
     }
 
     #[test]
@@ -955,7 +957,7 @@ mod tests {
         let text = normalize_newlines("a: 1\r\nother-secret\r\n\r\nuser: x\r\nb-secret\r\n".to_string());
         assert_eq!(text, "a: 1\nother-secret\n\nuser: x\nb-secret\n");
         let e = one(EntryKind::Login, "b-secret").entries.remove(0);
-        assert_eq!(source_preview(&text, &e), "user: x\nb-secret");
+        assert_eq!(source_preview(&text, &split_blocks(&text), &e), "user: x\nb-secret");
         assert_eq!(normalize_newlines("lf\nonly".to_string()), "lf\nonly");
     }
 
