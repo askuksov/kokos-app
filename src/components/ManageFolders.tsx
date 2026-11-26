@@ -136,8 +136,10 @@ function FolderRow({
   function commit() {
     const trimmed = name.trim();
     if (trimmed && trimmed !== node.name) {
+      // Restore the old name only if the input still holds this submission,
+      // so a newer draft typed meanwhile is kept.
       void onRename(node.id, trimmed).then((ok) => {
-        if (!ok) setName(node.name);
+        if (!ok) setName((cur) => (cur.trim() === trimmed ? node.name : cur));
       });
     } else setName(node.name);
   }
@@ -259,13 +261,14 @@ export function ManageFolders() {
     setRenameError(null);
     try {
       await renameFolder(id, name);
-      await refreshFolders();
-      return true;
     } catch (e) {
       console.error("rename_folder failed:", e);
       setRenameError(errorMessage(e, t));
       return false;
     }
+    // The rename is saved; a failed refresh must not roll the row back.
+    await refreshFolders().catch((e) => console.error("refresh_folders failed:", e));
+    return true;
   }
 
   async function handleDelete(id: string) {
