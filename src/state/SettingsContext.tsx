@@ -46,12 +46,20 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [saveFailed, setSaveFailed] = useState(false);
 
   const settingsRef = useRef<Settings | null>(null);
+  // Last settings known to match the backend; unlike settingsRef it is never
+  // touched by optimistic updates.
+  const confirmedRef = useRef<Settings | null>(null);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
 
   useEffect(() => {
-    getSettings().then(setS).catch(() => setS(DEFAULTS));
+    getSettings()
+      .then((s) => {
+        confirmedRef.current = s;
+        setS(s);
+      })
+      .catch(() => setS(DEFAULTS));
   }, []);
 
   const writeChain = useRef(Promise.resolve());
@@ -66,8 +74,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       let base: Settings;
       try {
         base = await getSettings();
+        confirmedRef.current = base;
       } catch {
-        base = settingsRef.current ?? DEFAULTS;
+        base = confirmedRef.current ?? DEFAULTS;
       }
       const next = { ...base, ...p };
       let committed: Settings;
@@ -75,6 +84,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         await setSettings(next);
         // The backend sanitizes the ids and keeps its own fields, so read back what it stored.
         committed = await getSettings().catch(() => next);
+        confirmedRef.current = committed;
         setSaveFailed(false);
       } catch (e) {
         console.error("set_settings failed:", e);
@@ -92,6 +102,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const done = writeChain.current.then(async () => {
       try {
         const fresh = await getSettings();
+        confirmedRef.current = fresh;
         setS(fresh);
         settingsRef.current = fresh;
       } catch {

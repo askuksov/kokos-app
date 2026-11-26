@@ -76,8 +76,10 @@ function TemplateRow({
   function commit() {
     const trimmed = name.trim();
     if (trimmed && trimmed !== template.name) {
+      // Restore the old name only if the input still holds this submission,
+      // so a newer draft typed meanwhile is kept.
       void onUpdate(template.id, trimmed, template.field_type, template.is_protected).then((ok) => {
-        if (!ok) setName(template.name);
+        if (!ok) setName((cur) => (cur.trim() === trimmed ? template.name : cur));
       });
     } else {
       setName(template.name);
@@ -186,13 +188,14 @@ export function ManageFieldTemplates({ embedded }: { embedded?: boolean }) {
     setRenameError(null);
     try {
       await updateTemplate(id, name, fieldType, isProtected);
-      await refreshTemplates();
-      return true;
     } catch (e) {
       console.error("update_template failed:", e);
       setRenameError(errorMessage(e, t));
       return false;
     }
+    // The update is saved; a failed refresh must not roll the row back.
+    await refreshTemplates().catch((e) => console.error("refresh_templates failed:", e));
+    return true;
   }
 
   async function handleDelete(id: string) {

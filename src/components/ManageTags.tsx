@@ -196,8 +196,10 @@ function TagRow({
   function commit() {
     const trimmed = name.trim();
     if (trimmed && trimmed !== tag.name) {
+      // Restore the old name only if the input still holds this submission,
+      // so a newer draft typed meanwhile is kept.
       void onRename(tag.id, trimmed).then((ok) => {
-        if (!ok) setName(tag.name);
+        if (!ok) setName((cur) => (cur.trim() === trimmed ? tag.name : cur));
       });
     } else setName(tag.name);
   }
@@ -276,14 +278,14 @@ export function ManageTags() {
     setRenameError(null);
     try {
       await renameTag(id, name);
-      await refreshTags();
-      await refreshEntries();
-      return true;
     } catch (e) {
       console.error("rename_tag failed:", e);
       setRenameError(errorMessage(e, t));
       return false;
     }
+    // The rename is saved; a failed refresh must not roll the row back.
+    await Promise.all([refreshTags(), refreshEntries()]).catch((e) => console.error("tag refresh failed:", e));
+    return true;
   }
 
   async function handleRecolor(id: string, hex: string) {
