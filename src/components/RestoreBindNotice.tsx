@@ -11,20 +11,21 @@ import { onRestoreBindFailure, takeRestoreBindFailure } from "../lib/restoreBind
  */
 export function RestoreBindNotice() {
   const t = useT();
-  const { setRoute, setSettingsTab } = useVault();
+  const { vaultId, setRoute, setSettingsTab } = useVault();
   const [error, setError] = useState<string | null>(null);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(dialogRef, { open: error !== null });
 
   useEffect(() => {
+    if (!vaultId) return;
     const pick = () => {
-      const e = takeRestoreBindFailure();
+      const e = takeRestoreBindFailure(vaultId);
       if (e !== null) setError(e);
     };
     pick();
     return onRestoreBindFailure(pick);
-  }, []);
+  }, [vaultId]);
 
   if (error === null) return null;
   const close = () => setError(null);
