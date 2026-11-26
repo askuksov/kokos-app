@@ -157,7 +157,8 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
         await restoreBind();
       } catch (e) {
         console.error("restore: sync bind failed", e);
-        reportRestoreBindFailure(errorMessage(e, t));
+        // The session id of a vault opened by path is that path.
+        reportRestoreBindFailure(dest, errorMessage(e, t));
       }
       await refreshStatus();
     } catch (e) {
