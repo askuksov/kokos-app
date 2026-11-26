@@ -71,7 +71,7 @@ pub(crate) async fn audit_active_vault(state: &AppState, events: Vec<(&'static s
     let Some((id, mut v)) = borrowed else { return };
     let v = match tauri::async_runtime::spawn_blocking(move || {
         for (event, detail) in &events {
-            let _ = kokos_core::audit::append(&v.conn, event, detail.as_deref());
+            let _ = v.audit(event, detail.as_deref());
         }
         let _ = kokos_core::vault::save(&mut v);
         v

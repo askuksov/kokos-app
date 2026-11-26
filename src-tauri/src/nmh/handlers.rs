@@ -662,7 +662,7 @@ pub fn audit_event(app: &tauri::AppHandle, event: &str, detail: Option<&str>) {
     if let Ok(mut reg) = st.sessions.lock() {
         if let Some(s) = reg.active_mut() {
             if let Some(v) = s.vault.as_ref() {
-                let _ = kokos_core::audit::append(&v.conn, event, detail);
+                let _ = v.audit(event, detail);
             }
         }
     };
@@ -675,7 +675,7 @@ pub fn audit_event_in(app: &tauri::AppHandle, vault_id: &str, event: &str, detai
     if let Ok(mut reg) = st.sessions.lock() {
         if let Some(s) = reg.get_mut(vault_id) {
             if let Some(v) = s.vault.as_ref() {
-                let _ = kokos_core::audit::append(&v.conn, event, detail);
+                let _ = v.audit(event, detail);
             }
         }
     };
