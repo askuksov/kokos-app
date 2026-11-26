@@ -20,7 +20,9 @@ pub struct AuditEntry {
 
 /// Records one security event, then prunes anything past the newest 500.
 /// `detail` is a human action label (e.g. "N failed attempts") -- NEVER a
-/// field value, password, or key material (see module doc).
+/// field value, password, or key material (see module doc). For an open
+/// vault use `OpenVault::audit`, which keeps the row out of the unsaved
+/// content check.
 pub fn append(conn: &Connection, event: &str, detail: Option<&str>) -> Result<()> {
     let now = crate::db::now_unix();
     let tx = conn.unchecked_transaction()?;

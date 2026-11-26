@@ -25,6 +25,10 @@ pub struct OpenVault {
     /// `conn.total_changes()` right after the last successful write of the
     /// container; any row change since then makes `has_unsaved_changes` true.
     saved_changes: u64,
+    /// Row changes made by `audit` since that write. Audit rows are not
+    /// content, so `has_unsaved_changes` discounts them. A `Cell` so callers
+    /// holding only `&OpenVault` can audit.
+    audit_changes: std::cell::Cell<u64>,
 }
 
 /// Hand-written rather than `#[derive(Debug)]`: `zeroize::Zeroizing<Z>` itself
@@ -60,15 +64,34 @@ impl OpenVault {
         Ok(crate::sync::SyncMeta { rev, modified, device })
     }
 
-    /// True when rows changed in memory since the container was last written
-    /// (a mutation whose `save` failed or never ran, or the migration and
-    /// trash cleanup `open` does before the first write).
+    /// True when content rows changed in memory since the container was last
+    /// written (a mutation whose `save` failed or never ran, or the migration
+    /// and trash cleanup `open` does before the first write). Audit rows
+    /// appended through `audit` do not count; ones appended straight through
+    /// `audit::append` do, which errs towards a new revision.
     pub fn has_unsaved_changes(&self) -> bool {
-        self.conn.total_changes() != self.saved_changes
+        self.conn
+            .total_changes()
+            .wrapping_sub(self.saved_changes)
+            .wrapping_sub(self.audit_changes.get())
+            != 0
+    }
+
+    /// `audit::append` on this vault, with its row changes (the insert and
+    /// the prune) kept out of `has_unsaved_changes`. Use this, not
+    /// `audit::append`, for an open vault: an audit row left unsaved must not
+    /// make the next lock look like a content edit and bump the revision.
+    pub fn audit(&self, event: &str, detail: Option<&str>) -> Result<()> {
+        let before = self.conn.total_changes();
+        let result = crate::audit::append(&self.conn, event, detail);
+        let delta = self.conn.total_changes().wrapping_sub(before);
+        self.audit_changes.set(self.audit_changes.get().wrapping_add(delta));
+        result
     }
 
     fn mark_saved(&mut self) {
         self.saved_changes = self.conn.total_changes();
+        self.audit_changes.set(0);
     }
 }
 
@@ -107,7 +130,7 @@ pub fn create(
     let mut conn = db::create_fresh()?;
     write_container(&mut conn, &header, &key, path)?;
     let saved_changes = conn.total_changes();
-    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false, backup_taken: false, saved_changes })
+    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated: false, backup_taken: false, saved_changes, audit_changes: Default::default() })
 }
 
 /// Upper bound on a vault container accepted by `open`, checked BEFORE the
@@ -161,7 +184,7 @@ pub fn open(path: &Path, password: &[u8], keyfile: Option<&Path>) -> Result<Open
     let retention = crate::trash::trash_auto_delete_days(&conn);
     crate::trash::auto_delete_old(&conn, retention)?;
 
-    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated, backup_taken: false, saved_changes: 0 })
+    Ok(OpenVault { conn, header, path: path.to_path_buf(), key, migrated, backup_taken: false, saved_changes: 0, audit_changes: Default::default() })
 }
 
 /// Saves in the container's current header version: a v1 file stays v1 until
@@ -344,7 +367,7 @@ pub fn save_opened(v: &mut OpenVault) -> Result<()> {
 /// the write.
 pub fn save_with_audit(v: &mut OpenVault, event: &str, detail: Option<&str>) -> Result<()> {
     let content_changed = v.has_unsaved_changes();
-    let audited = crate::audit::append(&v.conn, event, detail);
+    let audited = v.audit(event, detail);
     if content_changed {
         save(v)?;
     } else {
@@ -457,6 +480,60 @@ mod tests {
         save_with_audit(&mut v, "lock", None).unwrap();
         assert_eq!(v.sync_meta().unwrap().rev, rev + 1, "unsaved content must get a new revision");
         assert!(!v.has_unsaved_changes());
+    }
+
+    /// An export audits without saving; the lock after it must keep the revision.
+    #[test]
+    fn audit_rows_left_unsaved_are_not_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.kokos");
+        let mut v = create(&path, b"pw", "", FAST, None).unwrap();
+        let rev = v.sync_meta().unwrap().rev;
+
+        v.audit("exported", Some("json:0")).unwrap();
+        v.audit("exported", Some("kokos-copy")).unwrap();
+        assert!(!v.has_unsaved_changes(), "audit rows alone are not an edit");
+
+        save_with_audit(&mut v, "lock", None).unwrap();
+        assert_eq!(v.sync_meta().unwrap().rev, rev, "export then lock keeps the revision");
+
+        drop(v);
+        let v = open(&path, b"pw", None).unwrap();
+        let events: Vec<_> = crate::audit::list(&v.conn, 10).unwrap().into_iter().map(|r| r.event).collect();
+        assert_eq!(events, ["lock", "exported", "exported"], "the export rows are written by the lock");
+    }
+
+    /// An unsaved edit stays visible through later audit rows.
+    #[test]
+    fn unsaved_edit_followed_by_audit_still_bumps_the_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.kokos");
+        let mut v = create(&path, b"pw", "", FAST, None).unwrap();
+        let rev = v.sync_meta().unwrap().rev;
+
+        v.conn
+            .execute("INSERT INTO metadata (key, value) VALUES ('unsaved_probe', '1')", [])
+            .unwrap();
+        v.audit("exported", Some("json:1")).unwrap();
+        assert!(v.has_unsaved_changes());
+
+        save_with_audit(&mut v, "lock", None).unwrap();
+        assert_eq!(v.sync_meta().unwrap().rev, rev + 1, "edit, export, lock bumps the revision");
+        assert!(!v.has_unsaved_changes());
+    }
+
+    /// `save` resets the audit discount along with the saved mark.
+    #[test]
+    fn audit_discount_resets_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.kokos");
+        let mut v = create(&path, b"pw", "", FAST, None).unwrap();
+        v.audit("exported", None).unwrap();
+        save_opened(&mut v).unwrap();
+        v.conn
+            .execute("INSERT INTO metadata (key, value) VALUES ('unsaved_probe', '1')", [])
+            .unwrap();
+        assert!(v.has_unsaved_changes(), "an edit after a write is not hidden by an earlier audit");
     }
 
     #[test]
