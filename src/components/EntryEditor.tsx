@@ -788,8 +788,9 @@ function fieldsDiffer(base: EditableField[], cur: EditableField[]): boolean {
     ) {
       return true;
     }
-    // A stored secret that was only revealed, not edited, is saved as "keep".
-    if (f.id !== null && f.is_protected && !f.dirty) return false;
+    // A stored secret loads masked as "", so its value says nothing: only an
+    // edit (dirty) counts, a reveal alone is saved as "keep".
+    if (f.id !== null && f.is_protected) return f.dirty;
     return f.value !== o.value;
   });
 }
