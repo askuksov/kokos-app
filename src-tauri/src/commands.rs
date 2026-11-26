@@ -550,7 +550,7 @@ pub async fn open_vault(
 
     let vdir = ai_cleanup_dir(&app);
     let v = tauri::async_runtime::spawn_blocking(move || {
-        let _ = kokos_core::audit::append(&v.conn, "unlock", detail.as_deref());
+        let _ = v.audit("unlock", detail.as_deref());
         let _ = vault::save_opened(&mut v);
         if let Some(vdir) = &vdir {
             prune_orphan_vectors_blocking(&v, vdir);
@@ -951,7 +951,7 @@ pub async fn unlock_vault(
 
     let vdir = ai_cleanup_dir(&app);
     let v = tauri::async_runtime::spawn_blocking(move || {
-        let _ = kokos_core::audit::append(&v.conn, "unlock", detail.as_deref());
+        let _ = v.audit("unlock", detail.as_deref());
         let _ = vault::save_opened(&mut v);
         if let Some(vdir) = &vdir {
             prune_orphan_vectors_blocking(&v, vdir);
@@ -1223,9 +1223,9 @@ pub async fn change_master_password(
         let result = verify_current_credentials(&v, &current_pw, current_keyfile.as_deref())
             .and_then(|_| vault::change_password(&mut v, &pw, new_hint.as_deref(), action));
         if result.is_ok() {
-            let _ = kokos_core::audit::append(&v.conn, "master_password_changed", None);
+            let _ = v.audit("master_password_changed", None);
             if keyfile_changed {
-                let _ = kokos_core::audit::append(&v.conn, "keyfile_changed", None);
+                let _ = v.audit("keyfile_changed", None);
             }
             let _ = vault::save(&mut v);
         }
@@ -1352,7 +1352,7 @@ pub async fn set_vault_hint(
     let (v, result) = tauri::async_runtime::spawn_blocking(move || {
         let result = vault::set_hint(&mut v, &hint);
         if result.is_ok() {
-            let _ = kokos_core::audit::append(&v.conn, "hint_changed", None);
+            let _ = v.audit("hint_changed", None);
             let _ = vault::save(&mut v);
         }
         (v, result)
@@ -3754,7 +3754,7 @@ pub async fn export_json(app: tauri::AppHandle, state: State<'_, AppState>, vaul
             let bundle = kokos_core::portable::export(&v.conn, ids.as_deref(), env!("CARGO_PKG_VERSION"), now)?;
             let json = kokos_core::portable::to_json(&bundle)?;
             write_owner_only(&path, json.as_bytes()).map_err(|e| kokos_core::error::VaultError::Io(e.to_string()))?;
-            let _ = kokos_core::audit::append(&v.conn, "exported", Some(&format!("json:{}", bundle.data.entries.len())));
+            let _ = v.audit("exported", Some(&format!("json:{}", bundle.data.entries.len())));
             Ok(())
         })();
         (v, outcome)
@@ -3805,7 +3805,7 @@ pub async fn export_vault_copy(app: tauri::AppHandle, state: State<'_, AppState>
                 .map_err(|e| kokos_core::error::VaultError::Io(e.to_string()))?
                 .ok_or_else(|| kokos_core::error::VaultError::Io("vault file is not a regular file or is too large".to_string()))?;
             write_owner_only(&path, &bytes).map_err(|e| kokos_core::error::VaultError::Io(e.to_string()))?;
-            let _ = kokos_core::audit::append(&v.conn, "exported", Some("kokos-copy"));
+            let _ = v.audit("exported", Some("kokos-copy"));
             Ok(())
         })();
         (v, outcome)
@@ -3869,7 +3869,7 @@ pub async fn import_json(app: tauri::AppHandle, state: State<'_, AppState>, vaul
             let bundle = kokos_core::portable::parse(&raw)?;
             let report = kokos_core::portable::import(&v.conn, &bundle, now)?;
             vault::save(&mut v)?;
-            let _ = kokos_core::audit::append(&v.conn, "imported", Some(&format!("json:{}", report.entries)));
+            let _ = v.audit("imported", Some(&format!("json:{}", report.entries)));
             Ok(report)
         })();
         (v, outcome)
@@ -3922,7 +3922,7 @@ pub async fn import_kdbx(app: tauri::AppHandle, state: State<'_, AppState>, vaul
             let tree = kokos_core::kdbx::open(&bytes, &password)?;
             let report = kokos_core::kdbx::import(&v.conn, &tree, now)?;
             vault::save(&mut v)?;
-            let _ = kokos_core::audit::append(&v.conn, "imported", Some(&format!("kdbx:{}", report.entries)));
+            let _ = v.audit("imported", Some(&format!("kdbx:{}", report.entries)));
             Ok(report)
         })();
         (v, outcome)
@@ -3977,7 +3977,7 @@ pub async fn ai_text_import_commit(
                 }
             }
             vault::save(&mut v)?;
-            let _ = kokos_core::audit::append(&v.conn, "imported", Some(&format!("text:{}", imported)));
+            let _ = v.audit("imported", Some(&format!("text:{}", imported)));
             Ok(TextImportReport { imported, failed })
         })();
         for e in &mut proposal.entries {
@@ -4915,7 +4915,7 @@ pub async fn hibp_set_enabled(
     };
     if let (Some(id), Some(mut v)) = (id, borrowed) {
         let v = tauri::async_runtime::spawn_blocking(move || {
-            let _ = kokos_core::audit::append(&v.conn, event, None);
+            let _ = v.audit(event, None);
             let _ = vault::save(&mut v);
             v
         })
@@ -5261,7 +5261,7 @@ pub async fn keychain_enable(state: State<'_, AppState>, master_password: String
     };
     if let Some(mut v) = borrowed {
         let v = tauri::async_runtime::spawn_blocking(move || {
-            let _ = kokos_core::audit::append(&v.conn, "keychain_enabled", None);
+            let _ = v.audit("keychain_enabled", None);
             let _ = vault::save(&mut v);
             v
         })
@@ -5299,7 +5299,7 @@ pub async fn keychain_disable(state: State<'_, AppState>) -> CmdResult<()> {
     };
     if let Some(mut v) = borrowed {
         let v = tauri::async_runtime::spawn_blocking(move || {
-            let _ = kokos_core::audit::append(&v.conn, "keychain_disabled", None);
+            let _ = v.audit("keychain_disabled", None);
             let _ = vault::save(&mut v);
             v
         })
@@ -5362,7 +5362,7 @@ pub async fn keychain_unlock(
     ensure_not_superseded(&state, epoch)?;
 
     let v = tauri::async_runtime::spawn_blocking(move || {
-        let _ = kokos_core::audit::append(&v.conn, "unlock", None);
+        let _ = v.audit("unlock", None);
         let _ = vault::save_opened(&mut v);
         v
     })
@@ -5500,7 +5500,7 @@ pub async fn touchid_unlock(
     ensure_not_superseded(&state, epoch)?;
 
     let v = tauri::async_runtime::spawn_blocking(move || {
-        let _ = kokos_core::audit::append(&v.conn, "unlock", None);
+        let _ = v.audit("unlock", None);
         let _ = vault::save_opened(&mut v);
         v
     })
@@ -5948,7 +5948,7 @@ pub async fn gdrive_connect(app: tauri::AppHandle, state: State<'_, AppState>, v
     {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         if let Some(v) = reg.get_mut(&id).and_then(|s| s.vault.as_ref()) {
-            let _ = kokos_core::audit::append(&v.conn, "sync_connected", None);
+            let _ = v.audit("sync_connected", None);
         }
     }
     Ok(())
@@ -5984,7 +5984,7 @@ pub async fn gdrive_disconnect(app: tauri::AppHandle, state: State<'_, AppState>
     {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         if let Some(v) = reg.get_mut(&id).and_then(|s| s.vault.as_ref()) {
-            let _ = kokos_core::audit::append(&v.conn, "sync_disconnected", None);
+            let _ = v.audit("sync_disconnected", None);
         }
     }
     Ok(())
@@ -6476,7 +6476,7 @@ pub async fn gdrive_restore_bind(app: tauri::AppHandle, state: State<'_, AppStat
     {
         let mut reg = state.sessions.lock().map_err(|e| e.to_string())?;
         if let Some(v) = reg.get_mut(&id).and_then(|s| s.vault.as_ref()) {
-            let _ = kokos_core::audit::append(&v.conn, "sync_connected", None);
+            let _ = v.audit("sync_connected", None);
         }
     }
     Ok(())
