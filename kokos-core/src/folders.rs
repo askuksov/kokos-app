@@ -56,14 +56,7 @@ pub fn list_tree(conn: &Connection) -> Result<Vec<FolderNode>> {
         counts.insert(fid, n);
     }
 
-    let ids: HashSet<String> = folders.iter().map(|f| f.id.clone()).collect();
-    let mut parent_of: HashMap<String, Option<String>> = folders
-        .iter()
-        .map(|f| (f.id.clone(), effective_parent(&f.id, f.parent_id.as_deref(), &ids)))
-        .collect();
-    for id in cycle_breakers(&parent_of) {
-        parent_of.insert(id, Some("root".to_string()));
-    }
+    let parent_of = resolve_parents(folders.iter().map(|f| (f.id.as_str(), f.parent_id.as_deref())));
 
     let mut kids: HashMap<String, Vec<Folder>> = HashMap::new();
     let mut roots: Vec<Folder> = Vec::new();
@@ -168,21 +161,8 @@ pub fn move_to(conn: &Connection, id: &str, new_parent: Option<&str>, now: i64) 
     if target == id {
         return Err(VaultError::CircularReference);
     }
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut cur = Some(target.to_string());
-    while let Some(c) = cur {
-        if c == id {
-            return Err(VaultError::CircularReference);
-        }
-        if !visited.insert(c.clone()) {
-            break;
-        }
-        cur = conn
-            .query_row("SELECT parent_id FROM folders WHERE id = ?1", [&c], |r| {
-                r.get::<_, Option<String>>(0)
-            })
-            .optional()?
-            .flatten();
+    if resolved_chain_contains(&load_resolved_parents(conn)?, target, id) {
+        return Err(VaultError::CircularReference);
     }
     let n = conn.execute(
         "UPDATE folders SET parent_id = ?1, updated_at = ?2 WHERE id = ?3",
@@ -221,7 +201,7 @@ pub fn delete(conn: &Connection, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// The effective-parent rule shared by `list_tree` and `reorder`: `root` has
+/// The effective-parent rule behind `resolve_parents`: `root` has
 /// no parent (`None`); any other folder's stated `parent_id` is honored only
 /// when it names a different, existing, non-`root` folder -- otherwise
 /// (NULL / `"root"` / self / dangling) the folder folds into the top-level
@@ -281,6 +261,46 @@ fn cycle_breakers(parent_of: &HashMap<String, Option<String>>) -> Vec<String> {
     out
 }
 
+/// Each folder's parent as `list_tree` renders it: `effective_parent`, plus
+/// one folder of every `parent_id` cycle re-hung under `root`. The result has
+/// no cycles. `reorder` and `move_to` use the same map, so a drop lands where
+/// the user sees the target, not under a stored parent hidden in a cycle.
+fn resolve_parents<'a>(rows: impl Iterator<Item = (&'a str, Option<&'a str>)> + Clone) -> HashMap<String, Option<String>> {
+    let ids: HashSet<String> = rows.clone().map(|(id, _)| id.to_string()).collect();
+    let mut parent_of: HashMap<String, Option<String>> = rows
+        .map(|(id, parent)| (id.to_string(), effective_parent(id, parent, &ids)))
+        .collect();
+    for id in cycle_breakers(&parent_of) {
+        parent_of.insert(id, Some("root".to_string()));
+    }
+    parent_of
+}
+
+fn load_resolved_parents(conn: &Connection) -> Result<HashMap<String, Option<String>>> {
+    let mut stmt = conn.prepare("SELECT id, parent_id FROM folders")?;
+    let rows: Vec<(String, Option<String>)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(resolve_parents(rows.iter().map(|(id, p)| (id.as_str(), p.as_deref()))))
+}
+
+/// True when `needle` is `start` or one of its ancestors in `parent_of`.
+/// The visited set only guards against a map that was not resolved.
+fn resolved_chain_contains(parent_of: &HashMap<String, Option<String>>, start: &str, needle: &str) -> bool {
+    let mut visited: HashSet<&str> = HashSet::new();
+    let mut cur = Some(start);
+    while let Some(c) = cur {
+        if c == needle {
+            return true;
+        }
+        if !visited.insert(c) {
+            break;
+        }
+        cur = parent_of.get(c).and_then(|p| p.as_deref());
+    }
+    false
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
     Before,
@@ -288,8 +308,8 @@ pub enum Placement {
 }
 
 /// Places folder `id` as a sibling immediately Before/After `target_id`,
-/// inside `target_id`'s sibling group (its effective parent, per
-/// `effective_parent`), rewriting that whole group's `sort_order` to a dense
+/// inside `target_id`'s sibling group (its parent as rendered, per
+/// `resolve_parents`), rewriting that whole group's `sort_order` to a dense
 /// `0..N` so `list_tree` renders the new order. Also re-parents `id` into
 /// the group when it was elsewhere (a cross-parent before/after drop).
 ///
@@ -326,35 +346,23 @@ pub fn reorder(conn: &Connection, id: &str, target_id: &str, place: Placement, n
         .collect::<rusqlite::Result<_>>()?;
     drop(stmt);
 
-    let ids: HashSet<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let parent_of = resolve_parents(rows.iter().map(|r| (r.id.as_str(), r.parent_id.as_deref())));
 
-    let group_key = effective_parent(&target.id, target.parent_id.as_deref(), &ids)
+    let group_key = parent_of
+        .get(&target.id)
+        .cloned()
+        .flatten()
         .unwrap_or_else(|| "root".to_string());
     let new_parent = group_key.clone();
 
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut cur = Some(new_parent.clone());
-    while let Some(c) = cur {
-        if c == id {
-            return Err(VaultError::CircularReference);
-        }
-        if !visited.insert(c.clone()) {
-            break;
-        }
-        cur = conn
-            .query_row("SELECT parent_id FROM folders WHERE id = ?1", [&c], |r| {
-                r.get::<_, Option<String>>(0)
-            })
-            .optional()?
-            .flatten();
+    if resolved_chain_contains(&parent_of, &new_parent, id) {
+        return Err(VaultError::CircularReference);
     }
 
     let mut group: Vec<Row> = rows
         .into_iter()
         .filter(|r| r.id != id)
-        .filter(|r| {
-            effective_parent(&r.id, r.parent_id.as_deref(), &ids).as_deref() == Some(group_key.as_str())
-        })
+        .filter(|r| parent_of.get(&r.id).and_then(|p| p.as_deref()) == Some(group_key.as_str()))
         .collect();
     group.sort_by(|a, b| {
         a.sort_order
@@ -548,6 +556,65 @@ mod tests {
                 .map(|(id, _)| id.as_str())
                 .collect();
             assert_eq!(under_root, vec!["mix-a", "mix-x"], "[{label}] one re-hung folder per cycle");
+        }
+    }
+
+    #[test]
+    fn reorder_beside_a_rehung_cycle_folder_stays_in_its_rendered_group() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            seed_folders_unchecked(&conn, &[("rcy-a", "rcy-b"), ("rcy-b", "rcy-a")]);
+            seed_folder(&conn, "rcy-x", "rcy-x", Some("root"));
+
+            reorder(&conn, "rcy-x", "rcy-a", Placement::Before, now).unwrap();
+
+            let x = get_folder(&conn, "rcy-x").unwrap().unwrap();
+            assert_eq!(x.parent_id.as_deref(), Some("root"),
+                "[{label}] x joins the group rcy-a is shown in, not rcy-a's stored parent inside the cycle");
+            assert_eq!(relative_order(&conn, "root", &["rcy-a", "rcy-x"]), vec!["rcy-x", "rcy-a"],
+                "[{label}] x is rendered right before rcy-a under root");
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "rcy-b", label).as_deref(), Some("rcy-a"),
+                "[{label}] the cycle itself is left as rendered");
+        }
+    }
+
+    #[test]
+    fn reorder_beside_a_rendered_descendant_of_the_moved_folder_is_rejected() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            // Rendered: root > rcd-a > rcd-b > rcd-c.
+            seed_folders_unchecked(&conn, &[("rcd-a", "rcd-c"), ("rcd-b", "rcd-a"), ("rcd-c", "rcd-b")]);
+
+            assert!(
+                matches!(reorder(&conn, "rcd-a", "rcd-c", Placement::After, now),
+                    Err(crate::error::VaultError::CircularReference)),
+                "[{label}] placing a folder beside its own rendered grandchild is circular"
+            );
+        }
+    }
+
+    #[test]
+    fn move_to_checks_ancestors_as_the_tree_renders_them() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            // Rendered: root > mcy-a > mcy-b > mcy-c (mcy-a re-hung, stored parent mcy-c).
+            seed_folders_unchecked(&conn, &[("mcy-a", "mcy-c"), ("mcy-b", "mcy-a"), ("mcy-c", "mcy-b")]);
+
+            assert!(
+                matches!(move_to(&conn, "mcy-a", Some("mcy-c"), now),
+                    Err(crate::error::VaultError::CircularReference)),
+                "[{label}] moving a folder into its rendered descendant is circular"
+            );
+
+            move_to(&conn, "mcy-c", Some("mcy-a"), now).unwrap_or_else(|e| {
+                panic!("[{label}] mcy-a is not below mcy-c in the rendered tree: {e:?}")
+            });
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "mcy-c", label).as_deref(), Some("mcy-a"),
+                "[{label}] mcy-c now sits directly under mcy-a");
+            assert_eq!(rendered_parent_of(&rendered, "mcy-b", label).as_deref(), Some("mcy-a"),
+                "[{label}] mcy-b keeps its parent");
         }
     }
 
