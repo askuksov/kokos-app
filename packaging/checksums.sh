@@ -14,7 +14,16 @@ TARGET_DIR=${TARGET_DIR:-$REPO_ROOT/target/release}
 OUT=${OUT:-$REPO_ROOT/dist-release}
 
 mkdir -p "$OUT"
-found=0
+# Drop what an earlier run left behind: OUT may be reused, and everything in it
+# would otherwise end up in the new digest list. Only the artifact types and the
+# digest files are touched; anything else in OUT stays.
+rm -f -- "$OUT"/*.deb "$OUT"/*.rpm "$OUT"/*.AppImage "$OUT"/*.snap \
+  "$OUT"/SHA256SUMS "$OUT"/SHA256SUMS.asc
+
+# nullglob: a pattern with no match expands to nothing, not to itself, so a
+# build that produced only some of the package types still works.
+shopt -s nullglob
+copied=()
 for f in \
   "$TARGET_DIR"/bundle/deb/*.deb \
   "$TARGET_DIR"/bundle/rpm/*.rpm \
@@ -22,14 +31,16 @@ for f in \
   "$REPO_ROOT"/packaging/snap/*.snap
 do
   [ -f "$f" ] || continue
-  cp -f "$f" "$OUT/"
-  found=$((found + 1))
+  cp -f -- "$f" "$OUT/"
+  copied+=("$(basename -- "$f")")
 done
-[ "$found" -gt 0 ] || { echo "no artifacts found — build first" >&2; exit 1; }
+shopt -u nullglob
+[ "${#copied[@]}" -gt 0 ] || { echo "no artifacts found — build first" >&2; exit 1; }
 
 # Hash basenames, not paths, so the file verifies with a plain
 # `sha256sum -c SHA256SUMS` in whatever directory the user downloaded into.
-(cd "$OUT" && rm -f SHA256SUMS && sha256sum -- *.deb *.rpm *.AppImage *.snap 2>/dev/null > SHA256SUMS)
+# The list is the files copied above, never a glob over OUT.
+(cd "$OUT" && sha256sum -- "${copied[@]}" > SHA256SUMS)
 
 echo "wrote $OUT/SHA256SUMS"
 cat "$OUT/SHA256SUMS"
