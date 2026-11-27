@@ -92,9 +92,6 @@
       "nsis": {
         "installerHooks": "./windows/uninstall-hooks.nsh"
       }
-    },
-    "macOS": {
-      "signingIdentity": "Kokos Local Signing"
     }
   }
 }
