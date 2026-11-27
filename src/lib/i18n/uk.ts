@@ -786,6 +786,7 @@ export const uk: Record<string, string> = {
   "textImport.unit.min": "хв",
   "textImport.unit.h": "год",
   "textImport.modelNotReady": "Модель імпорту ще завантажується — спробуйте за мить",
+  "textImport.busy": "Попередній імпорт ще завершується — спробуйте за мить",
   "textImport.ft.text": "Текст",
   "textImport.ft.secret": "Секрет",
   "textImport.ft.url": "URL",

@@ -786,6 +786,7 @@ export const ru: Record<string, string> = {
   "textImport.unit.min": "мин",
   "textImport.unit.h": "ч",
   "textImport.modelNotReady": "Модель импорта ещё загружается — повторите через мгновение",
+  "textImport.busy": "Предыдущий импорт ещё завершается — повторите через мгновение",
   "textImport.ft.text": "Текст",
   "textImport.ft.secret": "Секрет",
   "textImport.ft.url": "URL",

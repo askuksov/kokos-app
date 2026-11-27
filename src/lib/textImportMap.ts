@@ -65,8 +65,26 @@ export function isAutoFieldName(name: string): boolean {
  *  per-entry picker and the header "Set all" bulk control. */
 export type FolderChoice = { mode: "existing"; id: string } | { mode: "new"; name: string };
 
-export interface DraftField { name: string; fieldType: string; isProtected: boolean; value: string; confidence: number; }
-export interface DraftEntry { title: string; entryType: EntryType; fields: DraftField[]; folder: FolderChoice; sourceFile: string | null; sourceFolder: string | null; sourceText: string | null; }
+/** `id` is a review-local React key: stable across discards, so per-row UI
+ *  state (a revealed secret) never moves to the next row. Not committed. */
+export interface DraftField { id: string; name: string; fieldType: string; isProtected: boolean; value: string; confidence: number; }
+export interface DraftEntry { id: string; title: string; entryType: EntryType; fields: DraftField[]; folder: FolderChoice; sourceFile: string | null; sourceFolder: string | null; sourceText: string | null; }
+
+let draftSeq = 0;
+/** A fresh review-local draft id (unique within this webview session). */
+export function newDraftId(): string {
+  draftSeq += 1;
+  return `d${Date.now().toString(36)}-${draftSeq}`;
+}
+
+/** Give every entry and field without an id one (a snapshot sealed by an older build). */
+export function withDraftIds(entries: DraftEntry[]): DraftEntry[] {
+  return entries.map((e) => ({
+    ...e,
+    id: e.id || newDraftId(),
+    fields: e.fields.map((f) => ({ ...f, id: f.id || newDraftId() })),
+  }));
+}
 
 /** The default destination for an entry when the review opens. Folder
  *  imports carry a `sourceFolder` (the enclosing subfolder name): match it against
@@ -81,15 +99,22 @@ export function initialFolderChoice(sourceFolder: string | null, flatFolders: { 
 
 /** Seed the editable review model from the analyze proposal, in vault-type space.
  *  `flatFolders` (the vault's folders, pre-flattened by the caller) seeds each
- *  entry's default destination — see `initialFolderChoice`. */
-export function seedDrafts(p: ImportProposal, flatFolders: { id: string; name: string }[] = []): DraftEntry[] {
+ *  entry's default destination — see `initialFolderChoice`. Only a folder import
+ *  derives a `sourceFolder`; a single picked file lands in Root, whatever
+ *  directory it was picked from. */
+export function seedDrafts(
+  p: ImportProposal,
+  flatFolders: { id: string; name: string }[] = [],
+  { folderImport = false }: { folderImport?: boolean } = {},
+): DraftEntry[] {
   return p.entries.map((e) => {
     const fields: DraftField[] = e.fields.map((f) => {
       const m = FIELD_MAP[f.fieldType];
-      return { name: m.name, fieldType: m.fieldType, isProtected: m.isProtected, value: f.value, confidence: f.confidence };
+      return { id: newDraftId(), name: m.name, fieldType: m.fieldType, isProtected: m.isProtected, value: f.value, confidence: f.confidence };
     });
-    const sourceFolder = folderOf(e.sourceFile);
+    const sourceFolder = folderImport ? folderOf(e.sourceFile) : null;
     return {
+      id: newDraftId(),
       title: e.title ?? deriveTitle(fields, e.sourceFile),
       entryType: KIND_TO_ENTRY_TYPE[e.kind],
       fields,
