@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "kokos"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -2742,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "kokos-ai"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "candle-core",
  "candle-transformers",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "kokos-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "base32",
@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "kokos-nmh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
