@@ -51,6 +51,7 @@ pub fn analyze_text_with_progress(
     let chunks_total = chunks.len();
     on_chunk(0, chunks_total);
 
+    let hint_spans: Vec<Span> = extract_hints(source).into_iter().map(|h| h.span).collect();
     let mut located: Vec<RawEntry> = Vec::new();
     for (ci, chunk) in chunks.iter().enumerate() {
         let chunk_text = match source.get(chunk.start..chunk.end) {
@@ -61,7 +62,7 @@ pub fn analyze_text_with_progress(
         let drafts = extractor.extract(chunk_text, &hints)?;
         let blocks_in_chunk: Vec<Span> =
             blocks.iter().copied().filter(|b| overlaps(*b, *chunk)).collect();
-        let ctx = LocateCtx { source, window: *chunk, blocks: &blocks_in_chunk };
+        let ctx = LocateCtx { source, window: *chunk, blocks: &blocks_in_chunk, hints: &hint_spans };
         located.extend(locate(&ctx, &drafts));
         on_chunk(ci + 1, chunks_total);
     }
@@ -321,6 +322,27 @@ mod tests {
             "the wifi block is recovered by the floor"
         );
         assert!(proposal.unparsed.is_empty(), "every block produced an entry");
+    }
+
+    /// The model cut a labelled value at its trailing dot: the draft does not
+    /// bind and the floor keeps the full value, never a truncated secret.
+    #[test]
+    fn labelled_value_with_a_trailing_dot_keeps_the_dot() {
+        let src = "pass: abc.";
+        let fake = FakeExtractor { scripted: vec![draft(EntryKind::Login, &[(FieldType::Password, "abc")])] };
+        let proposal = analyze_text(src, &fake, 4096).unwrap();
+        let vals: Vec<&str> = proposal.entries.iter().flat_map(|e| e.fields.iter().map(|f| f.value.as_str())).collect();
+        assert_eq!(vals, ["abc."], "got {:?}", proposal.entries);
+    }
+
+    #[test]
+    fn value_in_prose_before_a_full_stop_is_kept() {
+        let src = "The password is hunter2.";
+        let fake = FakeExtractor { scripted: vec![draft(EntryKind::Login, &[(FieldType::Password, "hunter2")])] };
+        let proposal = analyze_text(src, &fake, 4096).unwrap();
+        let vals: Vec<&str> = proposal.entries.iter().flat_map(|e| e.fields.iter().map(|f| f.value.as_str())).collect();
+        assert_eq!(vals, ["hunter2"], "got {:?}", proposal.entries);
+        assert!(proposal.unparsed.is_empty());
     }
 
     #[test]
