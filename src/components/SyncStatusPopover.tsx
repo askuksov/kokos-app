@@ -1,3 +1,4 @@
+import { formatDate } from "../lib/format";
 import { relTime, type SyncView } from "../lib/syncView";
 import { useT } from "../state/LangContext";
 import "./SyncStatusPopover.css";
@@ -45,7 +46,7 @@ export function SyncStatusPopover({
                 relLabel = t("sync.rel.day", { n: rel.value });
                 break;
               case "date":
-                relLabel = new Date(rel.iso).toLocaleDateString();
+                relLabel = formatDate(rel.iso);
                 break;
             }
           }

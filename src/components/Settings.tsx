@@ -2,8 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useVault } from "../state/VaultContext";
 import { useSettings } from "../state/SettingsContext";
-import { useT, useLang } from "../state/LangContext";
+import { useT } from "../state/LangContext";
 import { errorMessage } from "../lib/errors";
+import { formatDateTimeSec } from "../lib/format";
 import { IS_MAC, IS_WINDOWS } from "../lib/platform";
 import { TraySettings } from "./TraySettings";
 import {
@@ -270,7 +271,6 @@ export function Settings() {
     useVault();
   const { settings, update, refresh: refreshSettings } = useSettings();
   const t = useT();
-  const lang = useLang();
 
   const [version, setVersion] = useState("");
   useEffect(() => {
@@ -417,7 +417,7 @@ export function Settings() {
       setSyncBusy(false);
     }
   };
-  const fmtLast = (t0: number) => (t0 > 0 ? new Date(t0 * 1000).toLocaleString() : t("sync.never"));
+  const fmtLast = (t0: number) => (t0 > 0 ? formatDateTimeSec(t0) : t("sync.never"));
 
   useEffect(() => {
     const p = status?.path;
@@ -1357,8 +1357,7 @@ export function Settings() {
     },
   ];
   const grantGroups = groupGrantsByOrigin(grants);
-  const fmtGrantDate = (t0: number) =>
-    new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(t0 * 1000));
+  const fmtGrantDate = (t0: number) => formatDateTimeSec(t0);
 
   const securityBusy = mpBusy || hintBusy || kfBusy;
 
@@ -2605,9 +2604,7 @@ export function Settings() {
                     </span>
                     {e.detail && <span className="kv-audit-detail">{e.detail}</span>}
                     <span className="kv-audit-date">
-                      {new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(
-                        new Date(e.created_at * 1000),
-                      )}
+                      {formatDateTimeSec(e.created_at)}
                     </span>
                   </li>
                 ))}
