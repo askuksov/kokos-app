@@ -125,6 +125,11 @@ pub enum VaultError {
     #[error("not a Kokos export, or an unsupported export version")]
     ImportUnsupported,
 
+    /// The vault's stored device id is not a hyphenated UUID (a damaged or
+    /// crafted file); it is used in file names and Drive queries.
+    #[error("vault device id is invalid")]
+    InvalidDeviceId,
+
     #[error("kdbx_too_large")]
     KdbxTooLarge,
     #[error("kdbx_unsupported")]

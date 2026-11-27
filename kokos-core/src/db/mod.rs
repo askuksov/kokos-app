@@ -102,8 +102,17 @@ pub fn populate_defaults(conn: &Connection, now: i64) -> Result<()> {
 }
 
 /// Stable per-vault device identity (uuid v4), minted at creation / migration.
+///
+/// The value comes from the decrypted file, so a foreign vault can hold
+/// anything there; callers put it into file names (AI vector store) and Drive
+/// queries. Only the 36-character hyphenated UUID form is accepted, and it is
+/// returned unchanged so an existing identity never shifts.
 pub fn get_device_id(conn: &rusqlite::Connection) -> crate::error::Result<String> {
-    Ok(conn.query_row("SELECT value FROM metadata WHERE key='device_id'", [], |r| r.get(0))?)
+    let raw: String = conn.query_row("SELECT value FROM metadata WHERE key='device_id'", [], |r| r.get(0))?;
+    if raw.len() != 36 || uuid::Uuid::parse_str(&raw).is_err() {
+        return Err(crate::error::VaultError::InvalidDeviceId);
+    }
+    Ok(raw)
 }
 
 /// Monotonic sync revision (bumped every `vault::save`). Missing/garbage → 0.
@@ -180,6 +189,41 @@ mod tests {
         let dev = get_device_id(&conn).unwrap();
         assert_eq!(dev.len(), 36);
         assert_eq!(get_sync_revision(&conn).unwrap(), 0);
+    }
+
+    fn set_device_id(conn: &Connection, value: &str) {
+        conn.execute("UPDATE metadata SET value = ?1 WHERE key = 'device_id'", [value]).unwrap();
+    }
+
+    #[test]
+    fn device_id_accepts_a_valid_uuid() {
+        let conn = create_fresh().unwrap();
+        let id = "a1b8c2d0-1234-4abc-8def-0123456789ab";
+        set_device_id(&conn, id);
+        assert_eq!(get_device_id(&conn).unwrap(), id);
+    }
+
+    #[test]
+    fn device_id_rejects_non_uuid_values() {
+        let conn = create_fresh().unwrap();
+        for bad in [
+            "../x",
+            "/etc/passwd",
+            "C:\\Windows\\x",
+            "a1b8c2d0-1234-4abc-8def-0123456789a'",
+            "x' or name contains '",
+            "",
+            // Valid for `Uuid::parse_str`, but not the hyphenated form we mint.
+            "urn:uuid:a1b8c2d0-1234-4abc-8def-0123456789ab",
+            "{a1b8c2d0-1234-4abc-8def-0123456789ab}",
+            "a1b8c2d012344abc8def0123456789ab",
+        ] {
+            set_device_id(&conn, bad);
+            assert!(
+                matches!(get_device_id(&conn), Err(crate::error::VaultError::InvalidDeviceId)),
+                "must reject {bad:?}"
+            );
+        }
     }
 
     #[test]
