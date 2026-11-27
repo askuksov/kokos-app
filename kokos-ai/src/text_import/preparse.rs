@@ -115,6 +115,22 @@ pub fn classify_key(key: &str) -> Option<FieldType> {
     }
 }
 
+/// Drop the punctuation a sentence puts after a URL (`see https://a.com.`):
+/// trailing `.,;:` always, a trailing `)` only when it closes no `(` of the URL
+/// itself (`https://en.wikipedia.org/wiki/Rust_(language)` keeps its paren).
+fn trim_url_tail(url: &str) -> &str {
+    let mut u = url;
+    loop {
+        if let Some(rest) = u.strip_suffix(['.', ',', ';', ':']) {
+            u = rest;
+        } else if u.ends_with(')') && u.matches(')').count() > u.matches('(').count() {
+            u = &u[..u.len() - 1];
+        } else {
+            return u;
+        }
+    }
+}
+
 /// Extract high-confidence typed field hints from `text`. Every hint's span is a
 /// byte range into `text`; heuristic hints never set `echoed_value`.
 pub fn extract_hints(text: &str) -> Vec<RawField> {
@@ -127,7 +143,8 @@ pub fn extract_hints(text: &str) -> Vec<RawField> {
         push(&mut hints, FieldType::TotpSecret, m.start(), m.end(), 1.0);
     }
     for m in url_re().find_iter(text) {
-        push(&mut hints, FieldType::Url, m.start(), m.end(), 1.0);
+        let end = m.start() + trim_url_tail(m.as_str()).len();
+        push(&mut hints, FieldType::Url, m.start(), end, 1.0);
     }
     for m in email_re().find_iter(text) {
         push(&mut hints, FieldType::Email, m.start(), m.end(), 0.9);
@@ -377,6 +394,17 @@ mod tests {
         let pass = hints.iter().find(|h| h.field_type == FieldType::Password).unwrap();
         assert_eq!(value_of(text, pass), "hunter2");
         assert!(hints.iter().any(|h| h.field_type == FieldType::Email && value_of(text, h) == "me@x.com"));
+    }
+
+    #[test]
+    fn url_hint_drops_sentence_punctuation() {
+        let text = "Sign in at https://a.example.com/login. Or (https://b.example.com), see https://w.org/Rust_(language);";
+        let urls: Vec<&str> = extract_hints(text)
+            .iter()
+            .filter(|h| h.field_type == FieldType::Url)
+            .map(|h| value_of(text, h))
+            .collect();
+        assert_eq!(urls, ["https://a.example.com/login", "https://b.example.com", "https://w.org/Rust_(language)"]);
     }
 
     #[test]
