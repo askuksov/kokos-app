@@ -105,6 +105,10 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // True from an options change until the answer for the new options arrives.
+  // The old value stays on screen (no flicker) but "Use" is blocked so it
+  // can't submit a password that no longer matches the options.
+  const [stale, setStale] = useState(false);
 
   const closedRef = useRef(false);
   useEffect(() => {
@@ -149,6 +153,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
       const pw = await generatePassword(opts);
       if (closedRef.current || seq !== genSeqRef.current) return;
       setValue(pw);
+      setStale(false);
     } catch (e) {
       if (closedRef.current || seq !== genSeqRef.current) return;
       console.error("generate_password failed:", e);
@@ -161,8 +166,10 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
       genSeqRef.current++;
       setValue("");
       setError(null);
+      setStale(false);
       return;
     }
+    setStale(true);
     void runGenerate();
   }, [
     length,
@@ -190,7 +197,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
   }
 
   function handleUse() {
-    if (invalidReason || !value) return;
+    if (invalidReason || stale || !value) return;
     onUse(value);
     onClose();
   }
@@ -309,7 +316,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
         <button
           type="button"
           className="kv-btn is-primary"
-          disabled={disabled || !!invalidReason || !value}
+          disabled={disabled || !!invalidReason || stale || !value}
           onClick={handleUse}
         >
           {t("generator.use")}
