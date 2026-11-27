@@ -161,16 +161,19 @@ pub fn move_to(conn: &Connection, id: &str, new_parent: Option<&str>, now: i64) 
     if target == id {
         return Err(VaultError::CircularReference);
     }
-    if resolved_chain_contains(&load_resolved_parents(conn)?, target, id) {
+    let tx = conn.unchecked_transaction()?;
+    persist_cycle_breakers(&tx, now)?;
+    if resolved_chain_contains(&load_resolved_parents(&tx)?, target, id) {
         return Err(VaultError::CircularReference);
     }
-    let n = conn.execute(
+    let n = tx.execute(
         "UPDATE folders SET parent_id = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![target, now, id],
     )?;
     if n == 0 {
         return Err(VaultError::FolderNotFound);
     }
+    tx.commit()?;
     Ok(())
 }
 
@@ -179,6 +182,7 @@ pub fn delete(conn: &Connection, id: &str, now: i64) -> Result<()> {
         return Err(VaultError::CannotModifyRoot);
     }
     let tx = conn.unchecked_transaction()?;
+    persist_cycle_breakers(&tx, now)?;
     let parent: Option<String> = tx
         .query_row("SELECT parent_id FROM folders WHERE id = ?1", [id], |r| {
             r.get::<_, Option<String>>(0)
@@ -266,22 +270,47 @@ fn cycle_breakers(parent_of: &HashMap<String, Option<String>>) -> Vec<String> {
 /// no cycles. `reorder` and `move_to` use the same map, so a drop lands where
 /// the user sees the target, not under a stored parent hidden in a cycle.
 fn resolve_parents<'a>(rows: impl Iterator<Item = (&'a str, Option<&'a str>)> + Clone) -> HashMap<String, Option<String>> {
-    let ids: HashSet<String> = rows.clone().map(|(id, _)| id.to_string()).collect();
-    let mut parent_of: HashMap<String, Option<String>> = rows
-        .map(|(id, parent)| (id.to_string(), effective_parent(id, parent, &ids)))
-        .collect();
+    let mut parent_of = effective_parents(rows);
     for id in cycle_breakers(&parent_of) {
         parent_of.insert(id, Some("root".to_string()));
     }
     parent_of
 }
 
-fn load_resolved_parents(conn: &Connection) -> Result<HashMap<String, Option<String>>> {
+fn effective_parents<'a>(rows: impl Iterator<Item = (&'a str, Option<&'a str>)> + Clone) -> HashMap<String, Option<String>> {
+    let ids: HashSet<String> = rows.clone().map(|(id, _)| id.to_string()).collect();
+    rows.map(|(id, parent)| (id.to_string(), effective_parent(id, parent, &ids))).collect()
+}
+
+fn load_parent_rows(conn: &Connection) -> Result<Vec<(String, Option<String>)>> {
     let mut stmt = conn.prepare("SELECT id, parent_id FROM folders")?;
-    let rows: Vec<(String, Option<String>)> = stmt
+    let rows = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+fn load_resolved_parents(conn: &Connection) -> Result<HashMap<String, Option<String>>> {
+    let rows = load_parent_rows(conn)?;
     Ok(resolve_parents(rows.iter().map(|(id, p)| (id.as_str(), p.as_deref()))))
+}
+
+/// Stores `parent_id = 'root'` for the folder of each `parent_id` cycle that
+/// `list_tree` re-hangs under `root`, so the stored tree matches the rendered
+/// one before a folder mutation applies its own change. Without it, moving
+/// one cycle member can flip which member is re-hung, and deleting the
+/// re-hung folder would hand its contents to its own rendered child. Writes
+/// nothing when there is no cycle. Call it inside the mutation's transaction.
+fn persist_cycle_breakers(conn: &Connection, now: i64) -> Result<()> {
+    let rows = load_parent_rows(conn)?;
+    let parent_of = effective_parents(rows.iter().map(|(id, p)| (id.as_str(), p.as_deref())));
+    for id in cycle_breakers(&parent_of) {
+        conn.execute(
+            "UPDATE folders SET parent_id = 'root', updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        )?;
+    }
+    Ok(())
 }
 
 /// True when `needle` is `start` or one of its ancestors in `parent_of`.
@@ -324,8 +353,11 @@ pub fn reorder(conn: &Connection, id: &str, target_id: &str, place: Placement, n
         return Ok(());
     }
 
-    get_folder(conn, id)?.ok_or(VaultError::FolderNotFound)?;
-    let target = get_folder(conn, target_id)?.ok_or(VaultError::FolderNotFound)?;
+    let tx = conn.unchecked_transaction()?;
+    persist_cycle_breakers(&tx, now)?;
+
+    get_folder(&tx, id)?.ok_or(VaultError::FolderNotFound)?;
+    let target = get_folder(&tx, target_id)?.ok_or(VaultError::FolderNotFound)?;
 
     struct Row {
         id: String,
@@ -333,7 +365,7 @@ pub fn reorder(conn: &Connection, id: &str, target_id: &str, place: Placement, n
         name: String,
         sort_order: i32,
     }
-    let mut stmt = conn.prepare("SELECT id, parent_id, name, sort_order FROM folders")?;
+    let mut stmt = tx.prepare("SELECT id, parent_id, name, sort_order FROM folders")?;
     let rows: Vec<Row> = stmt
         .query_map([], |r| {
             Ok(Row {
@@ -382,7 +414,6 @@ pub fn reorder(conn: &Connection, id: &str, target_id: &str, place: Placement, n
     let mut ordered_ids: Vec<String> = group.into_iter().map(|r| r.id).collect();
     ordered_ids.insert(insert_at, id.to_string());
 
-    let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE folders SET parent_id = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![new_parent, now, id],
@@ -615,6 +646,92 @@ mod tests {
                 "[{label}] mcy-c now sits directly under mcy-a");
             assert_eq!(rendered_parent_of(&rendered, "mcy-b", label).as_deref(), Some("mcy-a"),
                 "[{label}] mcy-b keeps its parent");
+        }
+    }
+
+    #[test]
+    fn reorder_a_cycle_member_beside_the_rehung_one_makes_them_root_siblings() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            // Rendered: root > pcy-a > pcy-b.
+            seed_folders_unchecked(&conn, &[("pcy-a", "pcy-b"), ("pcy-b", "pcy-a")]);
+
+            reorder(&conn, "pcy-b", "pcy-a", Placement::Before, now).unwrap();
+
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "pcy-a", label).as_deref(), Some("root"),
+                "[{label}] pcy-a stays under root");
+            assert_eq!(rendered_parent_of(&rendered, "pcy-b", label).as_deref(), Some("root"),
+                "[{label}] pcy-b joins pcy-a's group under root");
+            assert_eq!(relative_order(&conn, "root", &["pcy-a", "pcy-b"]), vec!["pcy-b", "pcy-a"],
+                "[{label}] pcy-b is rendered right before pcy-a");
+            for fid in ["pcy-a", "pcy-b"] {
+                let f = get_folder(&conn, fid).unwrap().unwrap();
+                assert_eq!(f.parent_id.as_deref(), Some("root"), "[{label}] {fid} is stored under root too");
+            }
+        }
+    }
+
+    #[test]
+    fn move_to_root_of_a_cycle_member_keeps_the_rehung_one_at_root() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            // Rendered: root > pmv-a > pmv-b.
+            seed_folders_unchecked(&conn, &[("pmv-a", "pmv-b"), ("pmv-b", "pmv-a")]);
+
+            move_to(&conn, "pmv-b", None, now).unwrap();
+
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "pmv-a", label).as_deref(), Some("root"),
+                "[{label}] pmv-a must not drop below pmv-b");
+            assert_eq!(rendered_parent_of(&rendered, "pmv-b", label).as_deref(), Some("root"),
+                "[{label}] pmv-b moved to root");
+        }
+    }
+
+    #[test]
+    fn delete_of_a_rehung_cycle_folder_moves_contents_to_root() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            // Rendered: root > pdl-a > pdl-b > pdl-c.
+            seed_folders_unchecked(&conn, &[("pdl-a", "pdl-c"), ("pdl-b", "pdl-a"), ("pdl-c", "pdl-b")]);
+            seed_entry(&conn, "in-pdl-a", "In pdl-a", 0);
+            conn.execute("UPDATE entries SET folder_id = 'pdl-a' WHERE id = 'in-pdl-a'", []).unwrap();
+
+            delete(&conn, "pdl-a", now).unwrap();
+
+            let folder: Option<String> = conn.query_row(
+                "SELECT folder_id FROM entries WHERE id = 'in-pdl-a'", [], |r| r.get(0)).unwrap();
+            assert_eq!(folder.as_deref(), Some("root"),
+                "[{label}] the entry lands in root, not in the deleted folder's rendered child");
+            let b = get_folder(&conn, "pdl-b").unwrap().unwrap();
+            assert_eq!(b.parent_id.as_deref(), Some("root"), "[{label}] the rendered child moves to root");
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "pdl-b", label).as_deref(), Some("root"),
+                "[{label}] pdl-b is rendered under root");
+            assert_eq!(rendered_parent_of(&rendered, "pdl-c", label).as_deref(), Some("pdl-b"),
+                "[{label}] pdl-c keeps its parent");
+        }
+    }
+
+    #[test]
+    fn folder_mutations_leave_acyclic_parents_untouched() {
+        for (label, conn) in both_dbs() {
+            let now = crate::db::now_unix();
+            seed_folder(&conn, "acy-p", "acy-p", Some("root"));
+            seed_folder(&conn, "acy-kid", "acy-kid", Some("acy-p"));
+            seed_folder(&conn, "acy-null", "acy-null", None);
+            seed_folder(&conn, "acy-mover", "acy-mover", Some("root"));
+            let stamp = |fid: &str| -> (Option<String>, i64) {
+                conn.query_row("SELECT parent_id, updated_at FROM folders WHERE id = ?1", [fid],
+                    |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+            };
+            let before = [stamp("acy-p"), stamp("acy-kid"), stamp("acy-null")];
+
+            move_to(&conn, "acy-mover", Some("acy-p"), now + 100).unwrap();
+
+            let after = [stamp("acy-p"), stamp("acy-kid"), stamp("acy-null")];
+            assert_eq!(before, after, "[{label}] no cycle -> no extra parent writes");
         }
     }
 
