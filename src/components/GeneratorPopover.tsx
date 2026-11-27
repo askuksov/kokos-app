@@ -105,10 +105,10 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // True from an options change until the answer for the new options arrives.
-  // The old value stays on screen (no flicker) but "Use" is blocked so it
-  // can't submit a password that no longer matches the options.
-  const [stale, setStale] = useState(false);
+  // Options key the current `value` was generated with. Compared with the
+  // current options during render (see `stale` below), so no click can land
+  // between an options change and an effect-driven flag.
+  const [valueKey, setValueKey] = useState<string | null>(null);
 
   const closedRef = useRef(false);
   useEffect(() => {
@@ -134,26 +134,34 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
       ? t("generator.minimumsExceedLength")
       : null;
 
+  const currentOpts: GenOpts = {
+    length,
+    upper: enabled.upper,
+    lower: enabled.lower,
+    digits: enabled.digits,
+    symbols: enabled.symbols,
+    min_upper: enabled.upper ? mins.upper : 0,
+    min_lower: enabled.lower ? mins.lower : 0,
+    min_digits: enabled.digits ? mins.digits : 0,
+    min_symbols: enabled.symbols ? mins.symbols : 0,
+  };
+  const currentKey = JSON.stringify(currentOpts);
+  // The shown value was generated with other options than the current ones
+  // (new answer still pending). It stays visible to avoid flicker, but Use
+  // and Copy are blocked so it can't leave the popover.
+  const stale = value !== "" && valueKey !== currentKey;
+
   async function runGenerate() {
     if (invalidReason) return;
     const seq = ++genSeqRef.current;
     setError(null);
-    const opts: GenOpts = {
-      length,
-      upper: enabled.upper,
-      lower: enabled.lower,
-      digits: enabled.digits,
-      symbols: enabled.symbols,
-      min_upper: enabled.upper ? mins.upper : 0,
-      min_lower: enabled.lower ? mins.lower : 0,
-      min_digits: enabled.digits ? mins.digits : 0,
-      min_symbols: enabled.symbols ? mins.symbols : 0,
-    };
+    const opts = currentOpts;
+    const key = currentKey;
     try {
       const pw = await generatePassword(opts);
       if (closedRef.current || seq !== genSeqRef.current) return;
       setValue(pw);
-      setStale(false);
+      setValueKey(key);
     } catch (e) {
       if (closedRef.current || seq !== genSeqRef.current) return;
       console.error("generate_password failed:", e);
@@ -166,10 +174,9 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
       genSeqRef.current++;
       setValue("");
       setError(null);
-      setStale(false);
+      setValueKey(null);
       return;
     }
-    setStale(true);
     void runGenerate();
   }, [
     length,
@@ -203,7 +210,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
   }
 
   async function handleCopy() {
-    if (!value) return;
+    if (!value || stale) return;
     try {
       await copySecret(value);
       if (!closedRef.current) setCopied(true);
@@ -284,7 +291,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
             className="kv-btn is-icon"
             title={copied ? t("generator.copied") : t("generator.copy")}
             aria-label={t("generator.copyAriaLabel")}
-            disabled={disabled || !value}
+            disabled={disabled || stale || !value}
             style={copied ? { color: "var(--ok)" } : undefined}
             onClick={() => void handleCopy()}
           >
