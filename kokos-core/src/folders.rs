@@ -57,20 +57,18 @@ pub fn list_tree(conn: &Connection) -> Result<Vec<FolderNode>> {
     }
 
     let ids: HashSet<String> = folders.iter().map(|f| f.id.clone()).collect();
-    let eff_parent = |f: &Folder| -> Option<String> {
-        if f.id == "root" {
-            return None;
-        }
-        match &f.parent_id {
-            Some(p) if p != "root" && p != &f.id && ids.contains(p) => Some(p.clone()),
-            _ => Some("root".to_string()),
-        }
-    };
+    let mut parent_of: HashMap<String, Option<String>> = folders
+        .iter()
+        .map(|f| (f.id.clone(), effective_parent(&f.id, f.parent_id.as_deref(), &ids)))
+        .collect();
+    for id in cycle_breakers(&parent_of) {
+        parent_of.insert(id, Some("root".to_string()));
+    }
 
     let mut kids: HashMap<String, Vec<Folder>> = HashMap::new();
     let mut roots: Vec<Folder> = Vec::new();
     for f in folders {
-        match eff_parent(&f) {
+        match parent_of.get(&f.id).cloned().flatten() {
             None => roots.push(f),
             Some(p) => kids.entry(p).or_default().push(f),
         }
@@ -223,9 +221,8 @@ pub fn delete(conn: &Connection, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// Same effective-parent rule as `list_tree`'s `eff_parent` closure (kept as
-/// its own fn here since `list_tree` itself must not change): `root` has no
-/// parent (`None`); any other folder's stated `parent_id` is honored only
+/// The effective-parent rule shared by `list_tree` and `reorder`: `root` has
+/// no parent (`None`); any other folder's stated `parent_id` is honored only
 /// when it names a different, existing, non-`root` folder -- otherwise
 /// (NULL / `"root"` / self / dangling) the folder folds into the top-level
 /// group under `root`.
@@ -237,6 +234,51 @@ fn effective_parent(folder_id: &str, parent_id: Option<&str>, ids: &HashSet<Stri
         Some(p) if p != "root" && p != folder_id && ids.contains(p) => Some(p.to_string()),
         _ => Some("root".to_string()),
     }
+}
+
+/// Folders in a `parent_id` cycle (A -> B -> A, from a damaged or foreign
+/// vault) can never be reached from `root`, so `list_tree` would drop them
+/// and everything below them. Every folder has at most one effective parent,
+/// so each walk up the parent chain either ends at `root` or closes a loop.
+/// Returns one folder per loop (the smallest id, for a stable choice) to
+/// re-hang under `root`; the rest of the loop and any subtrees hanging off it
+/// then become reachable through it. Re-hanging every unreachable folder
+/// instead would keep the loop and recurse forever while building the tree.
+fn cycle_breakers(parent_of: &HashMap<String, Option<String>>) -> Vec<String> {
+    let mut ids: Vec<&str> = parent_of.keys().map(String::as_str).collect();
+    ids.sort_unstable();
+    // Walk number that first reached each folder.
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    let mut out = Vec::new();
+    for (walk, start) in ids.into_iter().enumerate() {
+        let mut path: Vec<&str> = Vec::new();
+        let mut cur = start;
+        loop {
+            if let Some(&w) = seen.get(cur) {
+                // Reached a folder first seen on THIS walk: the loop is the
+                // tail of the path from that folder on. A folder from an
+                // earlier walk was already resolved either way.
+                if w == walk {
+                    if let Some(pos) = path.iter().position(|&n| n == cur) {
+                        if let Some(min) = path[pos..].iter().min() {
+                            out.push((*min).to_string());
+                        }
+                    }
+                }
+                break;
+            }
+            seen.insert(cur, walk);
+            path.push(cur);
+            match parent_of.get_key_value(cur) {
+                Some((_, Some(p))) => match parent_of.get_key_value(p.as_str()) {
+                    Some((k, _)) => cur = k.as_str(),
+                    None => break,
+                },
+                _ => break,
+            }
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -409,6 +451,103 @@ mod tests {
                 folder.entry_count, 1,
                 "[{label}] entry_count must count the one live entry and exclude the soft-deleted one"
             );
+        }
+    }
+
+    /// Test-only: every folder id in the rendered tree with its rendered
+    /// parent id (`None` for top-level nodes), in tree order.
+    fn rendered_parents(conn: &Connection) -> Vec<(String, Option<String>)> {
+        fn walk(nodes: &[FolderNode], parent: Option<&str>, out: &mut Vec<(String, Option<String>)>) {
+            for n in nodes {
+                out.push((n.folder.id.clone(), parent.map(str::to_string)));
+                walk(&n.children, Some(&n.folder.id), out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(&list_tree(conn).unwrap(), None, &mut out);
+        out
+    }
+
+    fn rendered_parent_of(rendered: &[(String, Option<String>)], id: &str, label: &str) -> Option<String> {
+        let hits: Vec<_> = rendered.iter().filter(|(fid, _)| fid == id).collect();
+        assert_eq!(hits.len(), 1, "[{label}] folder {id} must be rendered exactly once");
+        hits[0].1.clone()
+    }
+
+    /// Inserts folders whose parents may not exist yet, so a cycle can be
+    /// written row by row.
+    fn seed_folders_unchecked(conn: &Connection, rows: &[(&str, &str)]) {
+        conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        for (id, parent) in rows {
+            seed_folder(conn, id, id, Some(parent));
+        }
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    }
+
+    #[test]
+    fn list_tree_shows_a_two_folder_cycle_with_one_rehung_under_root() {
+        for (label, conn) in both_dbs() {
+            seed_folders_unchecked(&conn, &[("cyc2-a", "cyc2-b"), ("cyc2-b", "cyc2-a")]);
+
+            let rendered = rendered_parents(&conn);
+            let a = rendered_parent_of(&rendered, "cyc2-a", label);
+            let b = rendered_parent_of(&rendered, "cyc2-b", label);
+            assert_eq!(a.as_deref(), Some("root"), "[{label}] the smallest id of the cycle hangs under root");
+            assert_eq!(b.as_deref(), Some("cyc2-a"), "[{label}] the rest of the cycle keeps its stored parent");
+        }
+    }
+
+    #[test]
+    fn list_tree_shows_a_three_folder_cycle_and_its_subtree() {
+        for (label, conn) in both_dbs() {
+            seed_folders_unchecked(
+                &conn,
+                &[("cyc3-a", "cyc3-c"), ("cyc3-b", "cyc3-a"), ("cyc3-c", "cyc3-b"), ("cyc3-kid", "cyc3-b")],
+            );
+
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "cyc3-a", label).as_deref(), Some("root"),
+                "[{label}] exactly one cycle member (the smallest id) is re-hung under root");
+            assert_eq!(rendered_parent_of(&rendered, "cyc3-b", label).as_deref(), Some("cyc3-a"),
+                "[{label}] cycle member under its stored parent");
+            assert_eq!(rendered_parent_of(&rendered, "cyc3-c", label).as_deref(), Some("cyc3-b"),
+                "[{label}] cycle member under its stored parent");
+            assert_eq!(rendered_parent_of(&rendered, "cyc3-kid", label).as_deref(), Some("cyc3-b"),
+                "[{label}] a folder hanging off the cycle stays under its parent");
+        }
+    }
+
+    #[test]
+    fn list_tree_shows_a_self_parent_folder_and_its_child() {
+        for (label, conn) in both_dbs() {
+            seed_folders_unchecked(&conn, &[("selfcyc", "selfcyc"), ("selfcyc-kid", "selfcyc")]);
+
+            let rendered = rendered_parents(&conn);
+            assert_eq!(rendered_parent_of(&rendered, "selfcyc", label).as_deref(), Some("root"),
+                "[{label}] a self-parent folder hangs under root");
+            assert_eq!(rendered_parent_of(&rendered, "selfcyc-kid", label).as_deref(), Some("selfcyc"),
+                "[{label}] its child stays under it");
+        }
+    }
+
+    #[test]
+    fn list_tree_renders_every_folder_exactly_once_around_cycles() {
+        for (label, conn) in both_dbs() {
+            seed_folder(&conn, "plain", "Plain", Some("root"));
+            seed_folders_unchecked(
+                &conn,
+                &[("mix-a", "mix-b"), ("mix-b", "mix-a"), ("mix-x", "mix-z"), ("mix-y", "mix-x"),
+                  ("mix-z", "mix-y"), ("mix-tail", "mix-y")],
+            );
+
+            let rendered = rendered_parents(&conn);
+            let total: i64 = conn.query_row("SELECT COUNT(*) FROM folders", [], |r| r.get(0)).unwrap();
+            assert_eq!(rendered.len() as i64, total, "[{label}] no folder is dropped or duplicated");
+            let under_root: Vec<&str> = rendered.iter()
+                .filter(|(id, p)| p.as_deref() == Some("root") && id.starts_with("mix-"))
+                .map(|(id, _)| id.as_str())
+                .collect();
+            assert_eq!(under_root, vec!["mix-a", "mix-x"], "[{label}] one re-hung folder per cycle");
         }
     }
 
