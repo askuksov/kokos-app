@@ -58,6 +58,9 @@ pub struct AppState {
     pub gen_engine: Mutex<Option<Arc<kokos_ai::text_import::engine::gen::GenExtractor>>>,
     /// Set by `ai_text_import_cancel`, polled by an in-flight analyze loop.
     pub gen_import_cancel: Arc<AtomicBool>,
+    /// True while a text-import analysis runs. A second analyze is refused:
+    /// it would reset `gen_import_cancel` under the first run and race it.
+    pub gen_import_active: Arc<AtomicBool>,
     /// Snapshot of any in-flight gen-model download (active flag + progress),
     /// shared with the download task's progress callback so a remounted Settings
     /// screen can rehydrate it. `Arc` so it clones into `spawn_blocking`.
@@ -113,6 +116,7 @@ impl AppState {
             ai_download_active: Arc::new(AtomicBool::new(false)),
             gen_engine: Mutex::new(None),
             gen_import_cancel: Arc::new(AtomicBool::new(false)),
+            gen_import_active: Arc::new(AtomicBool::new(false)),
             gen_download: Arc::new(Mutex::new(crate::text_import::GenDownloadState::default())),
             restored_locked: Mutex::new(Vec::new()),
         }
