@@ -116,20 +116,28 @@ pub fn classify_key(key: &str) -> Option<FieldType> {
 }
 
 /// Drop the punctuation a sentence puts after a URL (`see https://a.com.`):
-/// trailing `.,;:` always, a trailing `)` only when it closes no `(` of the URL
-/// itself (`https://en.wikipedia.org/wiki/Rust_(language)` keeps its paren).
+/// trailing `.,;:` always, a trailing `)` only when it closes no `(` before it
+/// (`https://en.wikipedia.org/wiki/Rust_(language)` keeps its paren). One
+/// linear pass: whether a `)` is matched depends only on what precedes it, and
+/// trimming never removes a `(`, so the positions found up front stay valid.
 fn trim_url_tail(url: &str) -> &str {
-    // Counted once: trimming only ever removes `)`, never `(`, so a long run of
-    // stray `)` stays linear instead of rescanning the URL per removal.
-    let opens = url.matches('(').count();
-    let mut closes = url.matches(')').count();
+    let mut depth = 0usize;
+    let mut unmatched: Vec<usize> = Vec::new();
+    for (i, b) in url.bytes().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' if depth > 0 => depth -= 1,
+            b')' => unmatched.push(i),
+            _ => {}
+        }
+    }
     let mut u = url;
     loop {
         if let Some(rest) = u.strip_suffix(['.', ',', ';', ':']) {
             u = rest;
-        } else if closes > opens && u.ends_with(')') {
+        } else if u.ends_with(')') && unmatched.last() == Some(&(u.len() - 1)) {
+            unmatched.pop();
             u = &u[..u.len() - 1];
-            closes -= 1;
         } else {
             return u;
         }
@@ -407,6 +415,13 @@ mod tests {
         assert_eq!(trim_url_tail(&format!("https://a.example.com/x{tail}")), "https://a.example.com/x");
         let balanced = format!("https://w.org/Rust_(language){}", ")".repeat(50_000));
         assert_eq!(trim_url_tail(&balanced), "https://w.org/Rust_(language)");
+    }
+
+    #[test]
+    fn url_hint_keeps_a_paren_matched_by_position() {
+        assert_eq!(trim_url_tail("https://example.com/a)b(c)"), "https://example.com/a)b(c)");
+        assert_eq!(trim_url_tail("https://example.com/a)b(c))."), "https://example.com/a)b(c)");
+        assert_eq!(trim_url_tail("https://example.com/a)"), "https://example.com/a");
     }
 
     #[test]
