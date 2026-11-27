@@ -47,7 +47,8 @@ anywhere; a live browser check then runs the old host.
 `src-tauri/tauri.windows.conf.json` declares this file as a bundle resource,
 so — exactly like the sidecar above — a Windows build **fails outright when it
 is missing**, with `resource path binaries/onnxruntime.dll doesn't exist`.
-Stage it with:
+Stage it with (downloads Microsoft's official build from NuGet, falling back
+to the GitHub release, and checks pinned digests):
 
     .\packaging\windows\fetch-onnxruntime.ps1
 
