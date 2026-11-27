@@ -153,7 +153,8 @@ pub fn extract_hints(text: &str) -> Vec<RawField> {
     };
 
     for m in otpauth_re().find_iter(text) {
-        push(&mut hints, FieldType::TotpSecret, m.start(), m.end(), 1.0);
+        let end = m.start() + trim_url_tail(m.as_str()).len();
+        push(&mut hints, FieldType::TotpSecret, m.start(), end, 1.0);
     }
     for m in url_re().find_iter(text) {
         let end = m.start() + trim_url_tail(m.as_str()).len();
@@ -415,6 +416,13 @@ mod tests {
         assert_eq!(trim_url_tail(&format!("https://a.example.com/x{tail}")), "https://a.example.com/x");
         let balanced = format!("https://w.org/Rust_(language){}", ")".repeat(50_000));
         assert_eq!(trim_url_tail(&balanced), "https://w.org/Rust_(language)");
+    }
+
+    #[test]
+    fn otpauth_hint_drops_a_sentence_final_dot() {
+        let text = "Scan otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=X.";
+        let otp = extract_hints(text).into_iter().find(|h| value_of(text, h).starts_with("otpauth://")).unwrap();
+        assert_eq!(value_of(text, &otp), "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&issuer=X");
     }
 
     #[test]

@@ -672,7 +672,13 @@ fn analyze_paths(
                 }
             };
             emit("analyze", 0, 0);
-            let res = analyze_text_with_progress(&text, engine, CHUNK_BUDGET_BYTES, &mut |d, t| emit("analyze", d, t)).ok().map(|mut p| {
+            // A cancel stops a large file at the next chunk boundary instead of
+            // holding the model (and the analysis guard) until the file ends.
+            let mut on_chunk = |d, t| {
+                emit("analyze", d, t);
+                !cancel.load(Ordering::SeqCst)
+            };
+            let res = analyze_text_with_progress(&text, engine, CHUNK_BUDGET_BYTES, &mut on_chunk).ok().map(|mut p| {
                 // Bound per file AND across the whole proposal before stamping
                 // (stamping allocates a preview per surviving entry).
                 let allow = MAX_ENTRIES_PER_FILE.min(MAX_ENTRIES_PER_PROPOSAL.saturating_sub(kept));
@@ -688,6 +694,7 @@ fn analyze_paths(
                 parts.push(p);
                 files_ok += 1;
             }
+            None if cancel.load(Ordering::SeqCst) => break,
             None => emit("skipped", 0, 0),
         }
         bytes_done += file_bytes;
