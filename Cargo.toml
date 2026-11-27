@@ -3,7 +3,7 @@ members = ["kokos-core", "kokos-nmh", "kokos-ai", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # Floor set by dependencies: rusqlite 0.43 declares rust-version 1.89
 # (ort 2.0.0-rc.13, image, time, plist and darling need 1.88). Active
