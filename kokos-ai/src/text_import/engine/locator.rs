@@ -9,7 +9,7 @@ use crate::text_import::model::{FieldType, RawEntry, RawField, Span};
 
 /// Search context for one chunk: the full `source` (spans are absolute into it),
 /// the chunk's byte `window`, the block spans within the window, and the spans
-/// of the pre-parser hints (`extract_hints`) over `source`.
+/// of the pre-parser hints (`extract_hints`) that lie in the window.
 pub struct LocateCtx<'a> {
     pub source: &'a str,
     pub window: Span,
@@ -20,6 +20,11 @@ pub struct LocateCtx<'a> {
 /// Confidence stamped on an LLM-located field (heuristic-floor fields keep their
 /// own pre-parser confidence; the review-UI shows this).
 const LLM_CONFIDENCE: f32 = 0.7;
+
+/// Confidence of a field bound only by the sentence-final-dot fallback. Kept
+/// below the review UI's low-confidence threshold (0.5), so the review flags
+/// it: the dot may still belong to the value (`password - Qwerty123.`).
+const FALLBACK_CONFIDENCE: f32 = 0.4;
 
 pub(crate) fn overlaps(a: Span, b: Span) -> bool {
     a.start < b.end && b.start < a.end
@@ -92,8 +97,8 @@ fn scan(
 /// Only when no such occurrence exists, a fallback pass accepts one followed by
 /// a sentence-final dot, provided no pre-parser hint reads that text with a
 /// different extent. `region` is char-aligned (a block or the chunk window), so
-/// the returned span is char-aligned. Returns `None` for an empty needle or no
-/// free occurrence.
+/// the returned span is char-aligned. Returns the span and whether only the
+/// fallback found it; `None` for an empty needle or no free occurrence.
 fn find_in(
     source: &str,
     needle: &str,
@@ -101,15 +106,17 @@ fn find_in(
     max_start: usize,
     consumed: &[Span],
     hints: &[Span],
-) -> Option<Span> {
+) -> Option<(Span, bool)> {
     if needle.is_empty() || region.end > source.len() || region.start > region.end {
         return None;
     }
-    scan(source, needle, region, max_start, consumed, |c| is_whole(source, c)).or_else(|| {
-        scan(source, needle, region, max_start, consumed, |c| {
-            is_whole_before_final_dot(source, c) && !conflicts_with_hint(hints, c)
-        })
+    if let Some(sp) = scan(source, needle, region, max_start, consumed, |c| is_whole(source, c)) {
+        return Some((sp, false));
+    }
+    scan(source, needle, region, max_start, consumed, |c| {
+        is_whole_before_final_dot(source, c) && !conflicts_with_hint(hints, c)
     })
+    .map(|sp| (sp, true))
 }
 
 /// The index of the entry's anchor field: prefer a URL, else the first field.
@@ -124,12 +131,12 @@ fn anchor_index(draft: &RawEntryDraft) -> Option<usize> {
     }
 }
 
-fn located_field(f: &RawFieldDraft, span: Span) -> RawField {
+fn located_field(f: &RawFieldDraft, span: Span, by_fallback: bool) -> RawField {
     RawField {
         field_type: f.field_type,
         span,
         echoed_value: Some(f.verbatim_text.clone()),
-        confidence: LLM_CONFIDENCE,
+        confidence: if by_fallback { FALLBACK_CONFIDENCE } else { LLM_CONFIDENCE },
     }
 }
 
@@ -164,9 +171,9 @@ pub fn locate(ctx: &LocateCtx, drafts: &[RawEntryDraft]) -> Vec<RawEntry> {
                 ),
                 None => find_in(ctx.source, &f.verbatim_text, ctx.window, ctx.window.end, &consumed, ctx.hints),
             };
-            if let Some(sp) = span {
+            if let Some((sp, by_fallback)) = span {
                 consumed.push(sp);
-                fields.push((i, located_field(f, sp)));
+                fields.push((i, located_field(f, sp, by_fallback)));
                 if block.is_none() {
                     block = Some(block_of(ctx.blocks, sp.start).unwrap_or(sp));
                 }
@@ -435,5 +442,39 @@ user: alice";
         let entries = locate(&ctx, &[d]);
         let vals: Vec<&str> = entries[0].fields.iter().map(|f| &src[f.span.start..f.span.end]).collect();
         assert_eq!(vals, ["https://a.example.com/login", "alice"], "got {vals:?}");
+    }
+
+    /// No `key: value` hint covers these lines, so the dot fallback binds the
+    /// value without its dot. The dot may be part of the secret: the field must
+    /// come out below the review's low-confidence threshold (0.5).
+    #[test]
+    fn dot_fallback_binding_is_flagged_as_low_confidence() {
+        for src in [
+            "1. password: Qwerty123.",
+            "Password (bank): Qwerty123.",
+            "Gmail — pass: Qwerty123.",
+            "Password - Qwerty123.",
+        ] {
+            let blocks = split_blocks(src);
+            let hints = hint_spans(src);
+            let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
+            let d = draft(EntryKind::Login, &[(FieldType::Password, "Qwerty123")]);
+            let entries = locate(&ctx, &[d]);
+            assert_eq!(entries.len(), 1, "{src:?}: got {entries:?}");
+            let f = &entries[0].fields[0];
+            assert_eq!(&src[f.span.start..f.span.end], "Qwerty123", "{src:?}");
+            assert!(f.confidence < 0.5, "{src:?}: confidence {}", f.confidence);
+        }
+    }
+
+    /// A strict whole-token match keeps the normal model confidence.
+    #[test]
+    fn strict_binding_keeps_the_model_confidence() {
+        let src = "pass: Qwerty123";
+        let blocks = split_blocks(src);
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
+        let d = draft(EntryKind::Login, &[(FieldType::Password, "Qwerty123")]);
+        assert_eq!(locate(&ctx, &[d])[0].fields[0].confidence, LLM_CONFIDENCE);
     }
 }

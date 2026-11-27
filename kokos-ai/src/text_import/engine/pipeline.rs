@@ -10,15 +10,28 @@ use crate::text_import::engine::locator::{block_of, locate, overlaps, LocateCtx}
 use crate::text_import::engine::reconcile::reconcile;
 use crate::text_import::integrity::{materialize, validate};
 use crate::text_import::model::{
-    EntryKind, FieldType, ImportProposal, RawEntry, RawProposal, Span, UnparsedBlock,
+    EntryKind, FieldType, ImportProposal, RawEntry, RawField, RawProposal, Span, UnparsedBlock,
 };
 use crate::text_import::preparse::{extract_hints, pre_parse, split_blocks};
 use crate::AiError;
 
+/// The hints (sorted by start, as `extract_hints` returns them) that start in
+/// `window`. A hint never crosses a line, and a chunk is whole blocks, so these
+/// are exactly the hints inside a chunk window.
+fn hints_in(hints: &[RawField], window: Span) -> &[RawField] {
+    let lo = hints.partition_point(|h| h.span.start < window.start);
+    let hi = hints.partition_point(|h| h.span.start < window.end);
+    &hints[lo..hi.max(lo)]
+}
+
 /// Materialize the pre-parser high-confidence hints whose span falls inside `window`.
 pub fn hints_for(source: &str, window: Span) -> Vec<FieldHint> {
-    extract_hints(source)
-        .into_iter()
+    materialize_hints(source, &extract_hints(source), window)
+}
+
+fn materialize_hints(source: &str, hints: &[RawField], window: Span) -> Vec<FieldHint> {
+    hints
+        .iter()
         .filter(|h| h.span.start >= window.start && h.span.end <= window.end)
         .filter_map(|h| {
             materialize(source, &h.span)
@@ -35,36 +48,45 @@ pub fn analyze_text(
     extractor: &dyn Extractor,
     chunk_budget: usize,
 ) -> Result<ImportProposal, AiError> {
-    analyze_text_with_progress(source, extractor, chunk_budget, &mut |_, _| {})
+    analyze_text_with_progress(source, extractor, chunk_budget, &mut |_, _| true)
 }
 
 /// Same as `analyze_text`, additionally calling `on_chunk(done, total)` before
-/// the first chunk (`done == 0`) and after every extracted chunk.
+/// the first chunk (`done == 0`) and after every extracted chunk. `on_chunk`
+/// returning `false` stops the analysis before the next chunk with
+/// `AiError::Cancelled`.
 pub fn analyze_text_with_progress(
     source: &str,
     extractor: &dyn Extractor,
     chunk_budget: usize,
-    on_chunk: &mut dyn FnMut(usize, usize),
+    on_chunk: &mut dyn FnMut(usize, usize) -> bool,
 ) -> Result<ImportProposal, AiError> {
     let blocks = split_blocks(source);
     let chunks = chunk_blocks(&blocks, chunk_budget.max(1));
     let chunks_total = chunks.len();
-    on_chunk(0, chunks_total);
+    if !on_chunk(0, chunks_total) {
+        return Err(AiError::Cancelled);
+    }
 
-    let hint_spans: Vec<Span> = extract_hints(source).into_iter().map(|h| h.span).collect();
+    // Computed once per file; each chunk takes its slice by binary search.
+    let all_hints = extract_hints(source);
     let mut located: Vec<RawEntry> = Vec::new();
     for (ci, chunk) in chunks.iter().enumerate() {
         let chunk_text = match source.get(chunk.start..chunk.end) {
             Some(t) => t,
             None => continue,
         };
-        let hints = hints_for(source, *chunk);
+        let chunk_hints = hints_in(&all_hints, *chunk);
+        let hints = materialize_hints(source, chunk_hints, *chunk);
         let drafts = extractor.extract(chunk_text, &hints)?;
         let blocks_in_chunk: Vec<Span> =
             blocks.iter().copied().filter(|b| overlaps(*b, *chunk)).collect();
+        let hint_spans: Vec<Span> = chunk_hints.iter().map(|h| h.span).collect();
         let ctx = LocateCtx { source, window: *chunk, blocks: &blocks_in_chunk, hints: &hint_spans };
         located.extend(locate(&ctx, &drafts));
-        on_chunk(ci + 1, chunks_total);
+        if !on_chunk(ci + 1, chunks_total) {
+            return Err(AiError::Cancelled);
+        }
     }
 
     keep_labelled_secrets_masked(source, &mut located);
@@ -343,6 +365,31 @@ mod tests {
         let vals: Vec<&str> = proposal.entries.iter().flat_map(|e| e.fields.iter().map(|f| f.value.as_str())).collect();
         assert_eq!(vals, ["hunter2"], "got {:?}", proposal.entries);
         assert!(proposal.unparsed.is_empty());
+    }
+
+    #[test]
+    fn hints_in_takes_exactly_the_hints_inside_a_chunk() {
+        let src = "user: a\npass: b\n\nsite: https://x.com\npass: c\n\nmail: me@y.com";
+        let all = extract_hints(src);
+        for chunk in chunk_blocks(&split_blocks(src), 1) {
+            let fast: Vec<Span> = hints_in(&all, chunk).iter().map(|h| h.span).collect();
+            let slow: Vec<Span> =
+                all.iter().filter(|h| h.span.start >= chunk.start && h.span.end <= chunk.end).map(|h| h.span).collect();
+            assert_eq!(fast, slow, "chunk {chunk:?}");
+        }
+    }
+
+    #[test]
+    fn progress_callback_can_stop_the_analysis() {
+        let src = "user: a\npass: b\n\nuser: c\npass: d";
+        let fake = FakeExtractor { scripted: vec![] };
+        let mut calls = 0;
+        let res = analyze_text_with_progress(src, &fake, 1, &mut |done, _| {
+            calls += 1;
+            done == 0
+        });
+        assert!(matches!(res, Err(AiError::Cancelled)), "got {res:?}");
+        assert_eq!(calls, 2, "stopped after the first chunk");
     }
 
     #[test]
