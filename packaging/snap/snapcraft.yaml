@@ -11,7 +11,7 @@
 # a snapcraft part. Run packaging/snap/stage-prebuilt.sh first.
 name: kokos
 base: core24
-version: '0.1.0'          # keep in step with Cargo.toml / package.json / tauri.conf.json
+version: '0.2.0'          # keep in step with Cargo.toml / package.json / tauri.conf.json
 summary: Local-first, encrypted password manager
 description: |
   Kokos keeps your vault in a single encrypted .kokos file (Argon2id +
