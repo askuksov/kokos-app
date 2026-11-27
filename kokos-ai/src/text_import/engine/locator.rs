@@ -8,11 +8,13 @@ use crate::text_import::engine::extractor::{RawEntryDraft, RawFieldDraft};
 use crate::text_import::model::{FieldType, RawEntry, RawField, Span};
 
 /// Search context for one chunk: the full `source` (spans are absolute into it),
-/// the chunk's byte `window`, and the block spans within the window.
+/// the chunk's byte `window`, the block spans within the window, and the spans
+/// of the pre-parser hints (`extract_hints`) over `source`.
 pub struct LocateCtx<'a> {
     pub source: &'a str,
     pub window: Span,
     pub blocks: &'a [Span],
+    pub hints: &'a [Span],
 }
 
 /// Confidence stamped on an LLM-located field (heuristic-floor fields keep their
@@ -41,14 +43,31 @@ fn is_whole(source: &str, cand: Span) -> bool {
     !before.is_some_and(continues_token) && !after.is_some_and(continues_token)
 }
 
-/// Find the first occurrence of `needle` within `region` that is a whole token,
-/// starts before `max_start`, and does not overlap an already-consumed span.
-/// `region` is char-aligned (a block or the chunk window), so the returned span
-/// is char-aligned. Returns `None` for an empty needle or no free occurrence.
-fn find_in(source: &str, needle: &str, region: Span, max_start: usize, consumed: &[Span]) -> Option<Span> {
-    if needle.is_empty() || region.end > source.len() || region.start > region.end {
-        return None;
-    }
+/// `cand` is a whole token except for one sentence-final dot right after it
+/// (`The password is hunter2.`): the dot is followed by whitespace or the end.
+fn is_whole_before_final_dot(source: &str, cand: Span) -> bool {
+    let before = source[..cand.start].chars().next_back();
+    let mut rest = source[cand.end..].chars();
+    !before.is_some_and(continues_token) && rest.next() == Some('.') && rest.next().map_or(true, char::is_whitespace)
+}
+
+/// A pre-parser hint claims a different extent over `cand` (`pass: abc.` holds
+/// the value `abc.`): cutting the dot off would yield a silently wrong secret.
+/// A hint with exactly `cand`'s span confirms the boundary instead.
+fn conflicts_with_hint(hints: &[Span], cand: Span) -> bool {
+    hints.iter().any(|h| *h != cand && overlaps(*h, cand))
+}
+
+/// The first occurrence of `needle` within `region` that starts before
+/// `max_start`, does not overlap an already-consumed span and passes `accept`.
+fn scan(
+    source: &str,
+    needle: &str,
+    region: Span,
+    max_start: usize,
+    consumed: &[Span],
+    accept: impl Fn(Span) -> bool,
+) -> Option<Span> {
     let hay = &source[region.start..region.end];
     let mut from = 0usize;
     while let Some(rel) = hay[from..].find(needle) {
@@ -57,7 +76,7 @@ fn find_in(source: &str, needle: &str, region: Span, max_start: usize, consumed:
             break;
         }
         let cand = Span { start, end: start + needle.len() };
-        if is_whole(source, cand) && !consumed.iter().any(|c| overlaps(*c, cand)) {
+        if accept(cand) && !consumed.iter().any(|c| overlaps(*c, cand)) {
             return Some(cand);
         }
         from += rel + needle.chars().next().map_or(1, |c| c.len_utf8());
@@ -66,6 +85,31 @@ fn find_in(source: &str, needle: &str, region: Span, max_start: usize, consumed:
         }
     }
     None
+}
+
+/// Find the first occurrence of `needle` within `region` that is a whole token,
+/// starts before `max_start`, and does not overlap an already-consumed span.
+/// Only when no such occurrence exists, a fallback pass accepts one followed by
+/// a sentence-final dot, provided no pre-parser hint reads that text with a
+/// different extent. `region` is char-aligned (a block or the chunk window), so
+/// the returned span is char-aligned. Returns `None` for an empty needle or no
+/// free occurrence.
+fn find_in(
+    source: &str,
+    needle: &str,
+    region: Span,
+    max_start: usize,
+    consumed: &[Span],
+    hints: &[Span],
+) -> Option<Span> {
+    if needle.is_empty() || region.end > source.len() || region.start > region.end {
+        return None;
+    }
+    scan(source, needle, region, max_start, consumed, |c| is_whole(source, c)).or_else(|| {
+        scan(source, needle, region, max_start, consumed, |c| {
+            is_whole_before_final_dot(source, c) && !conflicts_with_hint(hints, c)
+        })
+    })
 }
 
 /// The index of the entry's anchor field: prefer a URL, else the first field.
@@ -110,8 +154,15 @@ pub fn locate(ctx: &LocateCtx, drafts: &[RawEntryDraft]) -> Vec<RawEntry> {
             // A value may run past its block's end (a note with a blank line),
             // but it has to start inside the block.
             let span = match block {
-                Some(b) => find_in(ctx.source, &f.verbatim_text, Span { start: b.start, end: ctx.window.end }, b.end, &consumed),
-                None => find_in(ctx.source, &f.verbatim_text, ctx.window, ctx.window.end, &consumed),
+                Some(b) => find_in(
+                    ctx.source,
+                    &f.verbatim_text,
+                    Span { start: b.start, end: ctx.window.end },
+                    b.end,
+                    &consumed,
+                    ctx.hints,
+                ),
+                None => find_in(ctx.source, &f.verbatim_text, ctx.window, ctx.window.end, &consumed, ctx.hints),
             };
             if let Some(sp) = span {
                 consumed.push(sp);
@@ -139,7 +190,7 @@ pub fn locate(ctx: &LocateCtx, drafts: &[RawEntryDraft]) -> Vec<RawEntry> {
 mod tests {
     use super::*;
     use crate::text_import::model::{EntryKind, FieldType, Span};
-    use crate::text_import::preparse::split_blocks;
+    use crate::text_import::preparse::{extract_hints, split_blocks};
     use crate::text_import::engine::extractor::{RawEntryDraft, RawFieldDraft};
 
     fn draft(kind: EntryKind, fields: &[(FieldType, &str)]) -> RawEntryDraft {
@@ -150,12 +201,14 @@ mod tests {
         }
     }
     fn whole(src: &str) -> Span { Span { start: 0, end: src.len() } }
+    fn hint_spans(src: &str) -> Vec<Span> { extract_hints(src).into_iter().map(|h| h.span).collect() }
 
     #[test]
     fn locates_verbatim_fields_and_sets_echoed_value() {
         let src = "user: bob\npass: secret";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::Login, &[(FieldType::Login, "bob"), (FieldType::Password, "secret")]);
         let entries = locate(&ctx, &[d]);
         assert_eq!(entries.len(), 1);
@@ -170,7 +223,8 @@ mod tests {
     fn repeated_value_in_one_entry_gets_distinct_spans() {
         let src = "pin: 1234\nconfirm: 1234";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::SecureNote, &[(FieldType::Note, "1234"), (FieldType::Note, "1234")]);
         let entries = locate(&ctx, &[d]);
         assert_eq!(entries[0].fields.len(), 2);
@@ -181,7 +235,8 @@ mod tests {
     fn duplicate_value_across_blocks_stays_in_its_own_block() {
         let src = "site: https://a.com\npass: x\n\nsite: https://b.com\npass: x";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d0 = draft(EntryKind::Login, &[(FieldType::Url, "https://a.com"), (FieldType::Password, "x")]);
         let d1 = draft(EntryKind::Login, &[(FieldType::Url, "https://b.com"), (FieldType::Password, "x")]);
         let entries = locate(&ctx, &[d0, d1]);
@@ -198,7 +253,8 @@ mod tests {
     fn hallucinated_text_is_flagged_not_guessed() {
         let src = "user: bob\npass: secret";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::Login, &[(FieldType::Login, "bob"), (FieldType::Password, "hunter3")]);
         let entries = locate(&ctx, &[d]);
         assert_eq!(entries.len(), 1);
@@ -210,7 +266,8 @@ mod tests {
     fn entry_with_no_locatable_field_is_omitted() {
         let src = "nothing useful here";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::Login, &[(FieldType::Password, "ghost")]);
         assert!(locate(&ctx, &[d]).is_empty());
     }
@@ -219,7 +276,8 @@ mod tests {
     fn repeated_non_ascii_value_does_not_panic_and_gets_distinct_spans() {
         let src = "ключ: пароль\nдубль: пароль";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::SecureNote, &[(FieldType::Note, "пароль"), (FieldType::Note, "пароль")]);
         let entries = locate(&ctx, &[d]);
         assert_eq!(entries.len(), 1);
@@ -237,7 +295,8 @@ mod tests {
     fn same_value_in_two_entries_lands_on_two_occurrences() {
         let src = "GitHub\nlogin: jane@example.com\n\nGoogle\nuser: jane@example.com";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let a = draft(EntryKind::Login, &[(FieldType::Login, "jane@example.com")]);
         let b = draft(EntryKind::Login, &[(FieldType::Login, "jane@example.com")]);
         let entries = locate(&ctx, &[a, b]);
@@ -253,7 +312,8 @@ mod tests {
     fn truncated_value_does_not_match_inside_a_longer_token() {
         let src = "логин: ivan.petrov\n\nадрес: ivan.petrov@mail.ru";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let a = draft(EntryKind::Login, &[(FieldType::Login, "ivan.petrov")]);
         let b = draft(EntryKind::Login, &[(FieldType::Login, "ivan.petrov")]);
         let entries = locate(&ctx, &[a, b]);
@@ -267,7 +327,8 @@ mod tests {
     fn fields_from_another_block_are_not_bound_to_the_entry() {
         let src = "site: https://a.com\nuser: alice\n\nsite: https://b.com\nuser: bob\npass: b-secret";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(
             EntryKind::Login,
             &[(FieldType::Url, "https://a.com"), (FieldType::Login, "bob"), (FieldType::Password, "b-secret"), (FieldType::Login, "alice")],
@@ -284,7 +345,8 @@ mod tests {
     fn unlocatable_anchor_binds_to_the_first_found_field_block() {
         let src = "user: alice\npass: a-secret\n\nsite: https://b.com\nuser: bob";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(
             EntryKind::Login,
             &[(FieldType::Url, "https://ghost.example"), (FieldType::Password, "a-secret"), (FieldType::Login, "bob")],
@@ -301,7 +363,8 @@ mod tests {
     fn value_starting_in_the_block_may_cross_a_blank_line() {
         let src = "site: https://a.com\nnote: line one\n\nline two";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::Login, &[(FieldType::Url, "https://a.com"), (FieldType::Note, "line one\n\nline two")]);
         let entries = locate(&ctx, &[d]);
         assert_eq!(entries[0].fields.len(), 2);
@@ -311,9 +374,66 @@ mod tests {
     fn value_bounded_by_punctuation_still_matches() {
         let src = "admin / R0uter-Adm1n!, pass=hunter2";
         let blocks = split_blocks(src);
-        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks };
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
         let d = draft(EntryKind::Login, &[(FieldType::Password, "R0uter-Adm1n!"), (FieldType::Password, "hunter2")]);
         let entries = locate(&ctx, &[d]);
         assert_eq!(entries[0].fields.len(), 2);
+    }
+
+    /// Prose ends a value with a full stop: with no hint claiming the dot, the
+    /// fallback pass binds the draft's text.
+    #[test]
+    fn value_before_a_sentence_final_dot_is_located() {
+        let src = "The password is hunter2.";
+        let blocks = split_blocks(src);
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
+        let d = draft(EntryKind::Login, &[(FieldType::Password, "hunter2")]);
+        let entries = locate(&ctx, &[d]);
+        assert_eq!(entries.len(), 1, "got {entries:?}");
+        let f = &entries[0].fields[0];
+        assert_eq!(&src[f.span.start..f.span.end], "hunter2");
+    }
+
+    /// `pass: abc.` holds the value `abc.`: a draft cut short at the dot must
+    /// not bind (the floor keeps the full hint instead).
+    #[test]
+    fn draft_cut_at_a_labelled_value_dot_is_not_bound() {
+        let src = "pass: abc.";
+        let blocks = split_blocks(src);
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
+        let d = draft(EntryKind::Login, &[(FieldType::Password, "abc")]);
+        assert!(locate(&ctx, &[d]).is_empty());
+    }
+
+    /// The strict pass wins: a whole-token occurrence later in the block is
+    /// preferred over an earlier one followed by a dot.
+    #[test]
+    fn whole_token_occurrence_is_preferred_over_a_dotted_one() {
+        let src = "note: try hunter2. then
+pass: hunter2";
+        let blocks = split_blocks(src);
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
+        let d = draft(EntryKind::Login, &[(FieldType::Password, "hunter2")]);
+        let entries = locate(&ctx, &[d]);
+        let f = &entries[0].fields[0];
+        assert_eq!(f.span.start, src.rfind("hunter2").unwrap());
+    }
+
+    /// A URL that ends a sentence: the trimmed URL hint confirms the boundary.
+    #[test]
+    fn url_before_a_full_stop_is_located() {
+        let src = "Sign in at https://a.example.com/login.
+user: alice";
+        let blocks = split_blocks(src);
+        let hints = hint_spans(src);
+        let ctx = LocateCtx { source: src, window: whole(src), blocks: &blocks, hints: &hints };
+        let d = draft(EntryKind::Login, &[(FieldType::Url, "https://a.example.com/login"), (FieldType::Login, "alice")]);
+        let entries = locate(&ctx, &[d]);
+        let vals: Vec<&str> = entries[0].fields.iter().map(|f| &src[f.span.start..f.span.end]).collect();
+        assert_eq!(vals, ["https://a.example.com/login", "alice"], "got {vals:?}");
     }
 }
