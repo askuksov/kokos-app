@@ -36,7 +36,7 @@ a patch.
 
 ## Building
 
-Two things to expect:
+Three things to expect:
 
 - A local build is **not byte-identical** to a released binary. The build is not
   reproducible, so a hash comparison against a release will not match.
@@ -50,3 +50,9 @@ Two things to expect:
   time still works, but only on the machine that has it. Changing only the
   secret does not work — Google's token endpoint rejects a secret that does not
   belong to the client id sent with it.
+- **A macOS self-build is signed ad hoc.** The bundle config carries no signing
+  identity. A stable code signature is what lets the keychain remember "Always
+  Allow", so with an ad-hoc signature the fast-unlock keychain item asks for
+  permission again after every rebuild. To avoid that, export
+  `APPLE_SIGNING_IDENTITY` with the name of a code-signing certificate in your
+  keychain before `npm run tauri build`.
