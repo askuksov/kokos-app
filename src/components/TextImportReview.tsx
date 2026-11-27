@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useT } from "../state/LangContext";
 import { useVault } from "../state/VaultContext";
-import { useSettings } from "../state/SettingsContext";
 import { EntryTypeSelect } from "./EntryTypeSelect";
 import { PasswordField } from "./PasswordField";
-import { aiTextImportCancel, aiTextImportCommit, aiTextImportStash } from "../ipc/commands";
+import { aiTextImportCancel, aiTextImportStash } from "../ipc/commands";
 import {
   seedDrafts,
   draftsToCommit,
@@ -48,12 +47,15 @@ export function TextImportReview({
 }) {
   const t = useT();
   const { folders } = useVault();
-  const { refresh: refreshSettings } = useSettings();
-  const { analyze, keepReview, keptReview } = useTextImport();
+  const { analyze, keepReview, keptReview, commit, pendingCommit } = useTextImport();
   // A remount (tab switch, minimize) resumes the review this import already
   // has: the edited state kept in the provider wins over a restored snapshot.
+  // A commit still in flight keeps the panel in the committing phase, so the
+  // same entries cannot be imported twice.
   const [initial] = useState(() => keptReview() ?? snapshot);
-  const [phase, setPhase] = useState<"analyzing" | "review" | "committing">(initial ? "review" : "analyzing");
+  const [phase, setPhase] = useState<"analyzing" | "review" | "committing">(() =>
+    pendingCommit() ? "committing" : initial ? "review" : "analyzing",
+  );
   const [stage, setStage] = useState<string>("read");
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const etaRef = useRef<EtaState>(newEta());
@@ -71,9 +73,8 @@ export function TextImportReview({
   const dialogRef = useRef<HTMLDivElement>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
 
-  useEffect(() => {
-    if (firedRef.current) return;
-    firedRef.current = true;
+  const [retryable, setRetryable] = useState(false);
+  function runAnalyze() {
     // Joins the provider's run when one is already in flight for this source.
     analyze(source)
       .then((p) => {
@@ -83,16 +84,45 @@ export function TextImportReview({
         setPhase("review");
       })
       .catch((e) => {
-        setError(
-          String(e).includes("gen_model_not_ready")
-            ? t("textImport.modelNotReady")
-            : String(e).includes("import_in_progress")
-              ? t("textImport.busy")
-              : t("textImport.analyzeFailed"),
-        );
+        const s = String(e);
+        const busy = s.includes("import_in_progress");
+        const notReady = s.includes("gen_model_not_ready");
+        setError(notReady ? t("textImport.modelNotReady") : busy ? t("textImport.busy") : t("textImport.analyzeFailed"));
+        setRetryable(busy || notReady);
         setPhase("review");
       });
+  }
+  function retryAnalyze() {
+    setError(null);
+    setRetryable(false);
+    setProgress(null);
+    etaRef.current = newEta();
+    setPhase("analyzing");
+    runAnalyze();
+  }
+
+  useEffect(() => {
+    if (firedRef.current) return;
+    firedRef.current = true;
+    runAnalyze();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, t, folders, analyze]);
+
+  // Remounted while a commit runs: its failure returns this panel to review.
+  useEffect(() => {
+    const pending = pendingCommit();
+    if (!pending) return;
+    let live = true;
+    pending.catch(() => {
+      if (!live) return;
+      setError(t("textImport.commitFailed"));
+      setPhase("review");
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // A failed analysis is not a review: a remount rejoins the failed run and
   // shows its error again instead of an empty list.
@@ -243,10 +273,9 @@ export function TextImportReview({
     if (phase !== "review" || entries.length === 0) return;
     setPhase("committing");
     setError(null);
+    // The provider finishes the import on success (this panel then unmounts).
     try {
-      const report = await aiTextImportCommit(draftsToCommit(entries));
-      await refreshSettings();
-      onClose(report);
+      await commit(draftsToCommit(entries));
     } catch {
       setError(t("textImport.commitFailed"));
       setPhase("review");
@@ -387,7 +416,14 @@ export function TextImportReview({
                 </div>
               )}
               {entries.length === 0 ? (
-                <p className="kv-textimport-empty">{error ?? t("textImport.empty")}</p>
+                <div className="kv-textimport-empty">
+                  <p>{error ?? t("textImport.empty")}</p>
+                  {error && retryable && (
+                    <button type="button" className="kv-btn" onClick={retryAnalyze}>
+                      {t("textImport.retry")}
+                    </button>
+                  )}
+                </div>
               ) : (
                 entries.map((e, ei) => (
                   <div className="kv-textimport-card" key={e.id}>
