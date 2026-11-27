@@ -595,6 +595,25 @@ impl Drop for ActivityHeartbeat {
     }
 }
 
+/// Holds `AppState.gen_import_active` for one analysis run; released on drop,
+/// i.e. when the blocking analysis ends, even if the awaiting command is gone.
+struct AnalyzeGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl AnalyzeGuard {
+    /// `None` when another analysis already holds the flag.
+    fn claim(flag: &Arc<std::sync::atomic::AtomicBool>) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| Self(flag.clone()))
+    }
+}
+
+impl Drop for AnalyzeGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Shared per-file analyze loop (runs inside `spawn_blocking`). Reads each
 /// ALREADY-VALIDATED path, size-caps, analyzes, zeroizes the plaintext, merges.
 /// Callers guarantee every path is safe (allowlisted, or walked under a
@@ -700,6 +719,9 @@ pub async fn ai_text_import_analyze(
         }
     }
 
+    // Claimed before the cancel flag is reset: a second run must neither
+    // un-cancel nor race the first one.
+    let guard = AnalyzeGuard::claim(&state.gen_import_active).ok_or("import_in_progress")?;
     state.gen_import_cancel.store(false, Ordering::SeqCst);
     let cancel = state.gen_import_cancel.clone();
     let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
@@ -707,6 +729,7 @@ pub async fn ai_text_import_analyze(
     let app2 = app.clone();
 
     let (proposal, files_ok, entries_dropped) = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
         analyze_paths(&app2, engine.as_ref(), &cancel, files, files_total)
     })
     .await
@@ -743,6 +766,7 @@ pub async fn ai_text_import_analyze_folder(
         return Err(kokos_core::error::VaultError::PathNotAllowed.to_string());
     }
 
+    let guard = AnalyzeGuard::claim(&state.gen_import_active).ok_or("import_in_progress")?;
     state.gen_import_cancel.store(false, Ordering::SeqCst);
     let cancel = state.gen_import_cancel.clone();
 
@@ -760,6 +784,7 @@ pub async fn ai_text_import_analyze_folder(
     let app2 = app.clone();
 
     let (proposal, files_ok, entries_dropped) = tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
         analyze_paths(&app2, engine.as_ref(), &cancel, files, files_total)
     })
     .await
@@ -918,6 +943,15 @@ mod tests {
         assert_eq!(merged.entries.len(), 2);
         assert_eq!(merged.entries[0].fields[0].value, "a");
         assert_eq!(merged.entries[1].fields[0].value, "b");
+    }
+
+    #[test]
+    fn a_second_analysis_is_refused_until_the_first_ends() {
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let first = AnalyzeGuard::claim(&flag).expect("first run claims the flag");
+        assert!(AnalyzeGuard::claim(&flag).is_none(), "a parallel run is refused");
+        drop(first);
+        assert!(AnalyzeGuard::claim(&flag).is_some(), "free again after the first run ends");
     }
 
     #[test]

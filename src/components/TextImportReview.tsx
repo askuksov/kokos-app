@@ -5,11 +5,22 @@ import { useVault } from "../state/VaultContext";
 import { useSettings } from "../state/SettingsContext";
 import { EntryTypeSelect } from "./EntryTypeSelect";
 import { PasswordField } from "./PasswordField";
-import { aiTextImportAnalyze, aiTextImportAnalyzeFolder, aiTextImportCancel, aiTextImportCommit, aiTextImportStash } from "../ipc/commands";
-import { seedDrafts, draftsToCommit, baseName, defaultFieldName, isAutoFieldName, LOW_CONFIDENCE, type DraftEntry, type FolderChoice } from "../lib/textImportMap";
+import { aiTextImportCancel, aiTextImportCommit, aiTextImportStash } from "../ipc/commands";
+import {
+  seedDrafts,
+  draftsToCommit,
+  baseName,
+  defaultFieldName,
+  isAutoFieldName,
+  withDraftIds,
+  newDraftId,
+  LOW_CONFIDENCE,
+  type DraftEntry,
+  type FolderChoice,
+} from "../lib/textImportMap";
 import type { EntryType } from "../lib/entryTypes";
 import type { FolderNode, TextImportReport, UnparsedBlock } from "../ipc/types";
-import type { ImportSnapshot, ImportSource } from "../state/TextImportContext";
+import { useTextImport, type ImportSnapshot, type ImportSource } from "../state/TextImportContext";
 import { newEta, feedEta, etaSeconds, formatEta, overallFraction, fileFraction, type EtaState, type ImportProgress } from "../lib/textImportEta";
 import "./TextImportReview.css";
 
@@ -38,7 +49,11 @@ export function TextImportReview({
   const t = useT();
   const { folders } = useVault();
   const { refresh: refreshSettings } = useSettings();
-  const [phase, setPhase] = useState<"analyzing" | "review" | "committing">(snapshot ? "review" : "analyzing");
+  const { analyze, keepReview, keptReview } = useTextImport();
+  // A remount (tab switch, minimize) resumes the review this import already
+  // has: the edited state kept in the provider wins over a restored snapshot.
+  const [initial] = useState(() => keptReview() ?? snapshot);
+  const [phase, setPhase] = useState<"analyzing" | "review" | "committing">(initial ? "review" : "analyzing");
   const [stage, setStage] = useState<string>("read");
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const etaRef = useRef<EtaState>(newEta());
@@ -48,22 +63,21 @@ export function TextImportReview({
     const id = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(id);
   }, [phase]);
-  const [entries, setEntries] = useState<DraftEntry[]>((snapshot?.entries as DraftEntry[] | undefined) ?? []);
-  const [unparsed, setUnparsed] = useState<UnparsedBlock[]>((snapshot?.unparsed as UnparsedBlock[] | undefined) ?? []);
-  const [dropped, setDropped] = useState<number>(snapshot?.entriesDropped ?? 0);
+  const [entries, setEntries] = useState<DraftEntry[]>(() => withDraftIds((initial?.entries as DraftEntry[] | undefined) ?? []));
+  const [unparsed, setUnparsed] = useState<UnparsedBlock[]>((initial?.unparsed as UnparsedBlock[] | undefined) ?? []);
+  const [dropped, setDropped] = useState<number>(initial?.entriesDropped ?? 0);
   const [error, setError] = useState<string | null>(null);
-  const firedRef = useRef(snapshot !== null);
+  const firedRef = useRef(initial !== null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
 
   useEffect(() => {
     if (firedRef.current) return;
     firedRef.current = true;
-    const req =
-      source.kind === "folder" ? aiTextImportAnalyzeFolder(source.dir) : aiTextImportAnalyze([source.path]);
-    req
+    // Joins the provider's run when one is already in flight for this source.
+    analyze(source)
       .then((p) => {
-        setEntries(seedDrafts(p, flattenFolders(folders)));
+        setEntries(seedDrafts(p, flattenFolders(folders), { folderImport: source.kind === "folder" }));
         setUnparsed(p.unparsed ?? []);
         setDropped(p.entries_dropped ?? 0);
         setPhase("review");
@@ -72,11 +86,20 @@ export function TextImportReview({
         setError(
           String(e).includes("gen_model_not_ready")
             ? t("textImport.modelNotReady")
-            : t("textImport.analyzeFailed"),
+            : String(e).includes("import_in_progress")
+              ? t("textImport.busy")
+              : t("textImport.analyzeFailed"),
         );
         setPhase("review");
       });
-  }, [source, t, folders]);
+  }, [source, t, folders, analyze]);
+
+  // A failed analysis is not a review: a remount rejoins the failed run and
+  // shows its error again instead of an empty list.
+  useEffect(() => {
+    if (phase !== "review" || (entries.length === 0 && error !== null)) return;
+    keepReview({ source, entries, unparsed, entriesDropped: dropped });
+  }, [phase, entries, unparsed, source, dropped, error, keepReview]);
 
   // Keep a sealed copy of the review (with the user's edits) in the backend so
   // an auto-lock while away cannot lose the analysis result. Debounced; the
@@ -204,7 +227,13 @@ export function TextImportReview({
     setEntries((es) =>
       es.map((e, i) =>
         i === ei
-          ? { ...e, fields: [...e.fields, { name: defaultFieldName("text"), fieldType: "text", isProtected: false, value: "", confidence: 1 }] }
+          ? {
+              ...e,
+              fields: [
+                ...e.fields,
+                { id: newDraftId(), name: defaultFieldName("text"), fieldType: "text", isProtected: false, value: "", confidence: 1 },
+              ],
+            }
           : e,
       ),
     );
@@ -361,7 +390,7 @@ export function TextImportReview({
                 <p className="kv-textimport-empty">{error ?? t("textImport.empty")}</p>
               ) : (
                 entries.map((e, ei) => (
-                  <div className="kv-textimport-card" key={ei}>
+                  <div className="kv-textimport-card" key={e.id}>
                     {(e.sourceFolder || e.sourceFile) && (
                       <div className="kv-textimport-prov" title={e.sourceFile ?? undefined} aria-label={t("textImport.source")}>
                         {e.sourceFolder && (
@@ -397,7 +426,7 @@ export function TextImportReview({
                       </button>
                     </div>
                     {e.fields.map((f, fi) => (
-                      <div className={"kv-textimport-field" + (f.confidence < LOW_CONFIDENCE ? " is-low" : "")} key={fi}>
+                      <div className={"kv-textimport-field" + (f.confidence < LOW_CONFIDENCE ? " is-low" : "")} key={f.id}>
                         <span className="kv-textimport-lock" aria-hidden="true" title={f.isProtected ? t("textImport.protected") : undefined}>
                           {f.isProtected ? "🔒" : ""}
                         </span>
