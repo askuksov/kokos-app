@@ -119,12 +119,17 @@ pub fn classify_key(key: &str) -> Option<FieldType> {
 /// trailing `.,;:` always, a trailing `)` only when it closes no `(` of the URL
 /// itself (`https://en.wikipedia.org/wiki/Rust_(language)` keeps its paren).
 fn trim_url_tail(url: &str) -> &str {
+    // Counted once: trimming only ever removes `)`, never `(`, so a long run of
+    // stray `)` stays linear instead of rescanning the URL per removal.
+    let opens = url.matches('(').count();
+    let mut closes = url.matches(')').count();
     let mut u = url;
     loop {
         if let Some(rest) = u.strip_suffix(['.', ',', ';', ':']) {
             u = rest;
-        } else if u.ends_with(')') && u.matches(')').count() > u.matches('(').count() {
+        } else if closes > opens && u.ends_with(')') {
             u = &u[..u.len() - 1];
+            closes -= 1;
         } else {
             return u;
         }
@@ -394,6 +399,14 @@ mod tests {
         let pass = hints.iter().find(|h| h.field_type == FieldType::Password).unwrap();
         assert_eq!(value_of(text, pass), "hunter2");
         assert!(hints.iter().any(|h| h.field_type == FieldType::Email && value_of(text, h) == "me@x.com"));
+    }
+
+    #[test]
+    fn url_hint_trims_a_long_run_of_stray_closing_parens() {
+        let tail = ").".repeat(50_000);
+        assert_eq!(trim_url_tail(&format!("https://a.example.com/x{tail}")), "https://a.example.com/x");
+        let balanced = format!("https://w.org/Rust_(language){}", ")".repeat(50_000));
+        assert_eq!(trim_url_tail(&balanced), "https://w.org/Rust_(language)");
     }
 
     #[test]
