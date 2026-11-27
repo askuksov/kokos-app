@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useVault } from "../state/VaultContext";
 import { useClipboard } from "../state/ClipboardContext";
 import { useSettings } from "../state/SettingsContext";
-import { useT, useLang } from "../state/LangContext";
-import type { Lang } from "../lib/i18n";
+import { useT } from "../state/LangContext";
 import { monogram } from "../lib/monogram";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -28,7 +27,7 @@ import {
   updateEntry,
 } from "../ipc/commands";
 import type { AttachmentMeta, Entry, Field, FolderNode, FolderSuggestion, HistoryEntry, RelationView, TagSuggestion } from "../ipc/types";
-import { formatBytes } from "../lib/format";
+import { formatBytes, formatDateSec } from "../lib/format";
 import { tagColor } from "../lib/tagColors";
 import { entryTypeMeta } from "../lib/entryTypes";
 import type { StrengthScore } from "../lib/strength";
@@ -363,12 +362,6 @@ function EntryFieldRow({
   );
 }
 
-function formatDate(unixSeconds: number, lang: Lang): string {
-  return new Intl.DateTimeFormat(lang, { year: "numeric", month: "short", day: "numeric" }).format(
-    new Date(unixSeconds * 1000),
-  );
-}
-
 function Monogram({ title }: { title: string }) {
   const m = monogram(title);
   return (
@@ -415,7 +408,6 @@ function HistoryModal({
   onClose: () => void;
 }) {
   const t = useT();
-  const lang = useLang();
   const { settings } = useSettings();
   const [rows, setRows] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -582,7 +574,7 @@ function HistoryModal({
           ) : (
             rows.map((row) => {
               const shown = row.id in revealed;
-              const when = formatDate(row.changed_at, lang);
+              const when = formatDateSec(row.changed_at);
               return (
                 <div key={row.id} className="kv-manage-row">
                   <span className="kv-history-date">{when}</span>
@@ -738,7 +730,6 @@ export function EntryDetail({
   emptyOverride?: React.ReactNode;
 }) {
   const t = useT();
-  const lang = useLang();
   const { selectedId, select, setSaveError, refreshEntries, refreshFolders, refreshTags, folders,
     nav, search, visibleEntries, entriesLoaded } = useVault();
   const { settings } = useSettings();
@@ -1229,7 +1220,7 @@ export function EntryDetail({
                 <Icon name="folder" size={12} />
                 {folderName}
                 <span className="sep">·</span>
-                {t("detail.editedOn", { date: formatDate(entry.updated_at, lang) })}
+                {t("detail.editedOn", { date: formatDateSec(entry.updated_at) })}
               </div>
               {aiOn ? (
                 <div className="kv-suggest">
@@ -1365,7 +1356,7 @@ export function EntryDetail({
                       <div className="kv-attach-info">
                         <span className="kv-attach-name">{a.filename}</span>
                         <span className="kv-attach-meta">
-                          {formatBytes(a.size)} · {formatDate(a.created_at, lang)}
+                          {formatBytes(a.size)} · {formatDateSec(a.created_at)}
                         </span>
                       </div>
                       {(() => {
@@ -1457,11 +1448,11 @@ export function EntryDetail({
           <div className="kv-meta-grid">
             <div>
               {t("detail.created")}
-              <b>{formatDate(entry.created_at, lang)}</b>
+              <b>{formatDateSec(entry.created_at)}</b>
             </div>
             <div>
               {t("detail.lastModified")}
-              <b>{formatDate(entry.updated_at, lang)}</b>
+              <b>{formatDateSec(entry.updated_at)}</b>
             </div>
             <div>
               {t("detail.strength")}

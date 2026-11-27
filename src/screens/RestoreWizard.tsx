@@ -17,7 +17,7 @@ import { PasswordField } from "../components/PasswordField";
 import { KeyfileField } from "../components/KeyfileField";
 import { errorMessage } from "../lib/errors";
 import { reportRestoreBindFailure } from "../lib/restoreBindNotice";
-import { formatBytes, restoreBackupLabel } from "../lib/format";
+import { formatBytes, formatDateTime, restoreBackupLabel } from "../lib/format";
 import "./RestoreWizard.css";
 
 type Step = "signin" | "pick" | "unlock";
@@ -220,10 +220,7 @@ export function RestoreWizard({ onClose }: { onClose: () => void }) {
                         )}
                       </span>
                       <span className="kv-restore-meta">
-                        {new Date(f.modified_time).toLocaleString(undefined, {
-                          year: "numeric", month: "short", day: "numeric",
-                          hour: "numeric", minute: "2-digit",
-                        })}
+                        {formatDateTime(f.modified_time)}
                         {f.size != null ? ` · ${formatBytes(f.size)}` : ""}
                       </span>
                     </button>
