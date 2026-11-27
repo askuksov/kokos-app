@@ -76,6 +76,12 @@
   text-align: center;
   color: var(--text-3);
 }
+.kv-textimport-empty p {
+  margin: 0;
+}
+.kv-textimport-empty .kv-btn {
+  margin-top: 12px;
+}
 .kv-textimport-progress {
   font-weight: 600;
   color: var(--text-1);

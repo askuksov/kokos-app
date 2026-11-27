@@ -787,6 +787,7 @@ export const en: Record<string, string> = {
   "textImport.unit.h": "h",
   "textImport.modelNotReady": "The import model is still loading — try again in a moment",
   "textImport.busy": "Another import is still finishing — try again in a moment",
+  "textImport.retry": "Try again",
   "textImport.ft.text": "Text",
   "textImport.ft.secret": "Secret",
   "textImport.ft.url": "URL",
