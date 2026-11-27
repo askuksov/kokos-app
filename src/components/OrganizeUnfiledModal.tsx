@@ -21,6 +21,8 @@ export default function OrganizeUnfiledModal({ onClose, onApplied }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const applyingRef = useRef(false);
+  applyingRef.current = applying;
   useModalFocus(panelRef, { initialFocus: panelRef });
 
   useEffect(() => {
@@ -53,6 +55,7 @@ export default function OrganizeUnfiledModal({ onClose, onApplied }: Props) {
     function onKeyDown(ev: KeyboardEvent) {
       if (ev.key === "Escape") {
         ev.stopPropagation();
+        if (applyingRef.current) return;
         onCloseRef.current();
       }
     }
@@ -102,7 +105,9 @@ export default function OrganizeUnfiledModal({ onClose, onApplied }: Props) {
   const isEmpty = !loading && groups.length === 0;
 
   return (
-    <div className="kv-modal-scrim kv-organize-scrim" onClick={onClose}>
+    <div className="kv-modal-scrim kv-organize-scrim" onClick={() => {
+        if (!applying) onClose();
+      }}>
       <div
         className="kv-modal kv-organize"
         role="dialog"

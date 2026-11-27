@@ -114,6 +114,10 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
     };
   }, []);
 
+  // Bumped for every request and when the options become invalid, so a late
+  // answer to an older request can never overwrite the current state.
+  const genSeqRef = useRef(0);
+
   const anyClassEnabled = enabled.upper || enabled.lower || enabled.digits || enabled.symbols;
   const enabledMinSum =
     (enabled.upper ? mins.upper : 0) +
@@ -128,6 +132,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
 
   async function runGenerate() {
     if (invalidReason) return;
+    const seq = ++genSeqRef.current;
     setError(null);
     const opts: GenOpts = {
       length,
@@ -142,10 +147,10 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
     };
     try {
       const pw = await generatePassword(opts);
-      if (closedRef.current) return;
+      if (closedRef.current || seq !== genSeqRef.current) return;
       setValue(pw);
     } catch (e) {
-      if (closedRef.current) return;
+      if (closedRef.current || seq !== genSeqRef.current) return;
       console.error("generate_password failed:", e);
       setError(String(e));
     }
@@ -153,6 +158,7 @@ export function GeneratorPopover({ onUse, onClose, disabled }: GeneratorPopoverP
 
   useEffect(() => {
     if (invalidReason) {
+      genSeqRef.current++;
       setValue("");
       setError(null);
       return;
