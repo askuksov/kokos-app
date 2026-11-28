@@ -4,7 +4,9 @@ import { homeDir } from "@tauri-apps/api/path";
 import {
   biometricAvailable,
   biometricHas,
+  clearRecents,
   createVault,
+  forgetRecent,
   getVaultHeaderInfo,
   keychainHas,
   keychainUnlock,
@@ -30,7 +32,7 @@ const DEFAULT_KDF = { memory_kib: 65536, time_cost: 3, parallelism: 4 };
 
 type Pending = { kind: "open" | "create"; path: string };
 
-type WelcomeIcon = "plus" | "folder" | "clock" | "chevron" | "lock" | "note" | "shield" | "cloud";
+type WelcomeIcon = "plus" | "folder" | "clock" | "chevron" | "lock" | "note" | "shield" | "cloud" | "close";
 
 const ICON_PATHS: Record<WelcomeIcon, React.ReactNode> = {
   plus: <path d="M12 5.5v13M5.5 12h13" />,
@@ -56,6 +58,7 @@ const ICON_PATHS: Record<WelcomeIcon, React.ReactNode> = {
   ),
   shield: <path d="M12 3l7.5 2.8v5.7c0 4.3-2.9 7.3-7.5 9-4.6-1.7-7.5-4.7-7.5-9V5.8L12 3z" />,
   cloud: <path d="M7 18.5a4.2 4.2 0 01-.6-8.35 5.3 5.3 0 0110.3-1.9A4.6 4.6 0 0117.2 18.5H7z" />,
+  close: <path d="M7 7l10 10M17 7L7 17" />,
 };
 
 const VAULT_EXT = ".kokos";
@@ -118,9 +121,15 @@ export function WelcomeScreen() {
   const [pendingHasSaved, setPendingHasSaved] = useState(false);
   const [pendingHasBiometric, setPendingHasBiometric] = useState(false);
   const [showRestore, setShowRestore] = useState(false);
+  // The pending "open" target is gone from disk: show the not-found panel
+  // instead of a password prompt that could never succeed.
+  const [pendingMissing, setPendingMissing] = useState(false);
   const openedRef = useRef(false);
-  useEffect(() => {
+  function reloadRecents() {
     recentFiles().then(setRecents).catch(() => {});
+  }
+  useEffect(() => {
+    reloadRecents();
   }, []);
   useEffect(() => {
     homeDir().then(setHome).catch(() => setHome(null));
@@ -136,6 +145,7 @@ export function WelcomeScreen() {
     getVaultHeaderInfo(pending.path)
       .then((h) => {
         if (ignore) return;
+        setPendingMissing(false);
         setOpenHint(h.hint || null);
         setOpenRequiresKeyfile(h.requires_keyfile);
       })
@@ -143,6 +153,10 @@ export function WelcomeScreen() {
         if (ignore) return;
         setOpenHint(null);
         setOpenRequiresKeyfile(false);
+        if (String(err).includes("vault_not_found")) {
+          setPendingMissing(true);
+          return;
+        }
         // Surface the refusal now (e.g. a hidden folder under snap) instead of
         // after the user has typed the master password.
         setError(errorMessage(err, t));
@@ -190,6 +204,7 @@ export function WelcomeScreen() {
 
   function reset() {
     setPending(null);
+    setPendingMissing(false);
     setPassword("");
     setHint("");
     setCreateKeyfile(null);
@@ -205,6 +220,7 @@ export function WelcomeScreen() {
     setHint("");
     setCreateKeyfile(null);
     setOpenKeyfile(null);
+    setPendingMissing(false);
     setPending({ kind, path });
   }
 
@@ -220,13 +236,53 @@ export function WelcomeScreen() {
     void pick(intent);
   }, [addIntent, clearAddIntent]);
 
-  function openRecent(path: string) {
+  function openRecent(path: string, missing = false) {
     setError(null);
     setPassword("");
     setHint("");
     setCreateKeyfile(null);
     setOpenKeyfile(null);
+    // Known-missing entries skip straight to the not-found panel (no flash of
+    // the password form); the header probe still re-checks either way.
+    setPendingMissing(missing);
     setPending({ kind: "open", path });
+  }
+
+  async function forget(path: string): Promise<boolean> {
+    let ok = true;
+    try {
+      await forgetRecent(path);
+    } catch (err) {
+      ok = false;
+      setError(errorMessage(err, t));
+    }
+    reloadRecents();
+    return ok;
+  }
+
+  async function clearAllRecents() {
+    try {
+      await clearRecents();
+    } catch (err) {
+      setError(errorMessage(err, t));
+    }
+    reloadRecents();
+  }
+
+  async function forgetPending() {
+    if (!pending) return;
+    if (await forget(pending.path)) reset();
+  }
+
+  /** The vault moved: pick its new location, and drop the dead entry. */
+  async function locatePending() {
+    if (!pending) return;
+    const old = pending.path;
+    setError(null);
+    const path = await pickVaultPath("open");
+    if (!path) return;
+    if (path !== old) await forget(old);
+    openRecent(path);
   }
 
   useEffect(() => {
@@ -304,6 +360,13 @@ export function WelcomeScreen() {
       }
       await refreshStatus();
     } catch (err) {
+      // Deleted after the header probe passed: switch to the not-found panel.
+      if (pending.kind === "open" && String(err).includes("vault_not_found")) {
+        setPassword("");
+        setPendingMissing(true);
+        reloadRecents();
+        return;
+      }
       setError(errorMessage(err, t));
     } finally {
       setBusy(false);
@@ -324,7 +387,39 @@ export function WelcomeScreen() {
             <p className="kv-onboard-tag">{t("welcome.tagline")}</p>
           </div>
 
-          {pending ? (
+          {pending?.kind === "open" && pendingMissing ? (
+            <>
+              <div className="kv-onboard-missing" role="alert">
+                <p className="kv-onboard-missing-title">{t("welcome.missingTitle")}</p>
+                <p className="kv-onboard-missing-path" title={pending.path}>
+                  {tildify(pending.path, home)}
+                </p>
+                <p className="kv-onboard-hint">{t("welcome.missingBody")}</p>
+              </div>
+              <div className="kv-onboard-actions">
+                {recents.some((r) => r.path === pending.path) && (
+                  <button
+                    type="button"
+                    className="kv-btn is-primary is-lg is-block"
+                    onClick={forgetPending}
+                    autoFocus
+                  >
+                    {t("welcome.forgetRecent")}
+                  </button>
+                )}
+                <button type="button" className="kv-btn is-ghost is-lg is-block" onClick={locatePending}>
+                  <Icon name="folder" />
+                  {t("welcome.locateVault")}
+                </button>
+              </div>
+              {error && <p className="kv-onboard-error">{error}</p>}
+              <div className="kv-onboard-links">
+                <button type="button" className="kv-linkbtn" onClick={reset}>
+                  {t("common.cancel")}
+                </button>
+              </div>
+            </>
+          ) : pending ? (
             <>
               {pending.kind === "open" && pendingHasBiometric && !openRequiresKeyfile && (
                 <button
@@ -509,27 +604,49 @@ export function WelcomeScreen() {
               </div>
               <div className="kv-recent-list">
                 {recents.map((rv) => (
-                  <button
-                    key={rv.path}
-                    type="button"
-                    className="kv-recent-vault"
-                    disabled={busy}
-                    title={rv.path}
-                    onClick={() => openRecent(rv.path)}
-                  >
-                    <span className="kv-recent-ico">
-                      <Icon name="clock" />
-                    </span>
-                    <span className="kv-recent-body">
-                      <span className="kv-recent-name">{recentVaultName(rv.path)}</span>
-                      <span className="kv-recent-path">{tildify(rv.path, home)}</span>
-                    </span>
-                    <span className="kv-recent-go">
-                      <Icon name="chevron" />
-                    </span>
-                  </button>
+                  <div key={rv.path} className={`kv-recent-row${rv.missing ? " is-missing" : ""}`}>
+                    <button
+                      type="button"
+                      className="kv-recent-vault"
+                      disabled={busy}
+                      title={rv.path}
+                      onClick={() => openRecent(rv.path, rv.missing)}
+                    >
+                      <span className="kv-recent-ico">
+                        <Icon name="clock" />
+                      </span>
+                      <span className="kv-recent-body">
+                        <span className="kv-recent-name">
+                          {recentVaultName(rv.path)}
+                          {rv.missing && <span className="kv-recent-badge">{t("welcome.recentMissing")}</span>}
+                        </span>
+                        <span className="kv-recent-path">{tildify(rv.path, home)}</span>
+                      </span>
+                      <span className="kv-recent-go">
+                        <Icon name="chevron" />
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="kv-recent-forget"
+                      disabled={busy}
+                      title={t("welcome.forgetRecent")}
+                      aria-label={t("welcome.forgetRecentAria", { name: recentVaultName(rv.path) })}
+                      onClick={() => void forget(rv.path)}
+                    >
+                      <Icon name="close" size={13} />
+                    </button>
+                  </div>
                 ))}
               </div>
+              {recents.length > 0 && (
+                <div className="kv-onboard-links kv-recent-links">
+                  <button type="button" className="kv-linkbtn" disabled={busy} onClick={() => void clearAllRecents()}>
+                    {t("welcome.clearRecents")}
+                  </button>
+                </div>
+              )}
+              {error && <p className="kv-onboard-error">{error}</p>}
             </>
           )}
         </div>

@@ -114,6 +114,7 @@ pub struct RecentFile {
     pub path: String,
     pub last_opened: i64,
     pub has_keyfile: bool,
+    pub missing: bool,
 }
 
 #[derive(Serialize)]
@@ -392,15 +393,33 @@ fn ensure_keyfile_allowed(
 /// took a raw path straight from the WebView with no check at all, letting
 /// any caller read the password hint for an arbitrary filesystem path.
 #[tauri::command]
-pub async fn get_vault_header_info(state: State<'_, AppState>, path: String) -> CmdResult<HeaderInfo> {
+pub async fn get_vault_header_info(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> CmdResult<HeaderInfo> {
     if !crate::paths::is_allowed(&state.allowed_paths, &path) {
+        // A listed vault whose whole folder is gone (or whose volume is not
+        // mounted) cannot be canonicalised, so it never made the allowlist.
+        // Report it as missing; any other path stays refused.
+        if is_listed_vault_path(&app, &state, &path) && vault_file_missing(Path::new(&path)) {
+            return Err(VAULT_NOT_FOUND.to_string());
+        }
         return Err(VaultError::PathNotAllowed.to_string());
     }
     let path_for_error = path.clone();
-    let h = tauri::async_runtime::spawn_blocking(move || read_header_only(&PathBuf::from(path)))
-        .await
-        .map_err(spawn_blocking_failed)?
-        .map_err(|e| explain_vault_error(&e, &path_for_error, crate::nmh::snap::instance_name().as_deref()))?;
+    let h = tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(path);
+        read_header_only(&p).map_err(|e| (vault_file_missing(&p), e))
+    })
+    .await
+    .map_err(spawn_blocking_failed)?
+    .map_err(|(missing, e)| {
+        if missing && matches!(e, VaultError::Io(_)) {
+            return VAULT_NOT_FOUND.to_string();
+        }
+        explain_vault_error(&e, &path_for_error, crate::nmh::snap::instance_name().as_deref())
+    })?;
     Ok(HeaderInfo { hint: h.hint.clone(), requires_keyfile: h.requires_keyfile(), format_version: h.version })
 }
 
@@ -527,18 +546,20 @@ pub async fn open_vault(
     }
 
     let opened = tauri::async_runtime::spawn_blocking(move || {
-        vault::open(
-            &PathBuf::from(path),
-            &pw,
-            keyfile_path.as_ref().map(PathBuf::from).as_deref(),
-        )
+        let p = PathBuf::from(path);
+        vault::open(&p, &pw, keyfile_path.as_ref().map(PathBuf::from).as_deref())
+            .map_err(|e| (vault_file_missing(&p), e))
     })
     .await
     .map_err(spawn_blocking_failed)?;
 
     let mut v = match opened {
         Ok(v) => v,
-        Err(e) => {
+        Err((missing, e)) => {
+            // Nothing was read, so it is not a failed password attempt.
+            if missing && matches!(e, VaultError::Io(_)) {
+                return Err(VAULT_NOT_FOUND.to_string());
+            }
             record_open_failure(cfg_dir.as_deref(), &path_for_recent, &e);
             return Err(explain_vault_error(&e, &path_for_recent, crate::nmh::snap::instance_name().as_deref()));
         }
@@ -609,32 +630,54 @@ fn folder_pre_open(app: &tauri::AppHandle, vault_path: &str) {
     }
 }
 
-/// Records a successfully opened vault. Best-effort: a failure here must never
-/// break opening. Stores paths and timestamps only — never passwords.
-fn push_recent(app: &tauri::AppHandle, path: &str, has_keyfile: bool) {
-    use tauri::Manager;
-    let Ok(dir) = app.path().app_config_dir() else { return };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
+/// Serialises every read-modify-write of `recent.json` (open, forget, clear),
+/// so a forget racing an open cannot resurrect or drop an entry.
+static RECENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Applies `edit` to the recent list on disk and writes it back atomically.
+/// Caller holds `RECENT_LOCK`. A missing or unreadable file reads as empty.
+fn edit_recent(dir: &Path, edit: impl FnOnce(&mut Vec<RecentFileRaw>)) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
     let file = dir.join("recent.json");
     let mut items: Vec<RecentFileRaw> = std::fs::read_to_string(&file)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    items.retain(|r| r.path != path);
-    items.insert(
-        0,
-        RecentFileRaw {
-            path: path.to_string(),
-            last_opened: kokos_core::db::now_unix(),
-            has_keyfile,
-        },
-    );
-    items.truncate(10);
-    if let Ok(json) = serde_json::to_string(&items) {
-        let _ = std::fs::write(file, json);
-    }
+    edit(&mut items);
+    let json = serde_json::to_string(&items).map_err(std::io::Error::other)?;
+    write_owner_only(&file.to_string_lossy(), json.as_bytes())
+}
+
+/// Records a successfully opened vault. Best-effort: a failure here must never
+/// break opening. Stores paths and timestamps only — never passwords.
+fn push_recent(app: &tauri::AppHandle, path: &str, has_keyfile: bool) {
+    use tauri::Manager;
+    let Ok(dir) = app.path().app_config_dir() else { return };
+    let Ok(_guard) = RECENT_LOCK.lock() else { return };
+    let _ = edit_recent(&dir, |items| {
+        items.retain(|r| r.path != path);
+        items.insert(
+            0,
+            RecentFileRaw {
+                path: path.to_string(),
+                last_opened: kokos_core::db::now_unix(),
+                has_keyfile,
+            },
+        );
+        items.truncate(10);
+    });
+}
+
+/// Error token for a vault file that is gone from its path (deleted, moved,
+/// renamed, or on a volume that is not mounted). The frontend matches on it to
+/// offer "remove from recent" / "locate" instead of a password prompt.
+const VAULT_NOT_FOUND: &str = "vault_not_found";
+
+/// True only when the OS positively reports that nothing exists at `path`. A
+/// refused lookup (permission, snap confinement) is NOT "missing", and neither
+/// is an evicted iCloud file whose `.icloud` placeholder is still there.
+fn vault_file_missing(path: &Path) -> bool {
+    matches!(path.try_exists(), Ok(false)) && !crate::icloud_macos::is_placeholder(path)
 }
 
 /// Write-through of the open-tab set (paths + active) to `settings.json`, so
@@ -933,13 +976,18 @@ pub async fn unlock_vault(
 
     let opened = tauri::async_runtime::spawn_blocking(move || {
         vault::open(&path, &pw, keyfile_path.as_ref().map(PathBuf::from).as_deref())
+            .map_err(|e| (vault_file_missing(&path), e))
     })
     .await
     .map_err(spawn_blocking_failed)?;
 
     let mut v = match opened {
         Ok(v) => v,
-        Err(e) => {
+        Err((missing, e)) => {
+            // Nothing was read, so it is not a failed password attempt.
+            if missing && matches!(e, VaultError::Io(_)) {
+                return Err(VAULT_NOT_FOUND.to_string());
+            }
             record_open_failure(cfg_dir.as_deref(), &path_str, &e);
             return Err(explain_vault_error(&e, &path_str, crate::nmh::snap::instance_name().as_deref()));
         }
@@ -1056,6 +1104,17 @@ pub fn reorder_vaults(
         reg.reorder(&ordered_ids);
     }
     persist_open_vaults_inner(&app, &state, Some(&ordered_ids));
+    Ok(())
+}
+
+/// Closes a tab that was restored locked at launch and never unlocked. Such a
+/// tab has no registry session, so `close_vault` cannot see it; without this
+/// it stays in `restored_locked` and comes back on the next launch. Only
+/// removes a path from the restored set (no file access, nothing to unlock).
+#[tauri::command]
+pub fn close_restored_tab(app: tauri::AppHandle, state: State<'_, AppState>, vault_id: String) -> CmdResult<()> {
+    mark_restored_unlocked(&state, &vault_id);
+    persist_open_vaults(&app, &state);
     Ok(())
 }
 
@@ -1369,9 +1428,10 @@ pub async fn set_vault_hint(
 }
 
 /// Recent files live in the app config, never in the container, and hold no
-/// passwords.
+/// passwords. `missing` marks entries whose file is gone; the existence checks
+/// run off the async runtime, since a stat on a dead network volume can block.
 #[tauri::command]
-pub fn recent_files(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<Vec<RecentFile>> {
+pub async fn recent_files(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdResult<Vec<RecentFile>> {
     use tauri::Manager;
     let path = app
         .path()
@@ -1386,10 +1446,38 @@ pub fn recent_files(app: tauri::AppHandle, state: State<'_, AppState>) -> CmdRes
     for r in &items {
         crate::paths::allow(&state.allowed_paths, &r.path);
     }
-    Ok(items
-        .into_iter()
-        .map(|r| RecentFile { path: r.path, last_opened: r.last_opened, has_keyfile: r.has_keyfile })
-        .collect())
+    tauri::async_runtime::spawn_blocking(move || {
+        items
+            .into_iter()
+            .map(|r| RecentFile {
+                missing: vault_file_missing(Path::new(&r.path)),
+                path: r.path,
+                last_opened: r.last_opened,
+                has_keyfile: r.has_keyfile,
+            })
+            .collect()
+    })
+    .await
+    .map_err(spawn_blocking_failed)
+}
+
+/// Removes one path from the recent list. Paths only: saved passwords, Touch ID
+/// entries and the vault file itself are left alone.
+#[tauri::command]
+pub fn forget_recent(app: tauri::AppHandle, path: String) -> CmdResult<()> {
+    use tauri::Manager;
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let _guard = RECENT_LOCK.lock().map_err(|e| e.to_string())?;
+    edit_recent(&dir, |items| items.retain(|r| r.path != path)).map_err(|e| e.to_string())
+}
+
+/// Empties the recent list (see `forget_recent` for what it does not touch).
+#[tauri::command]
+pub fn clear_recents(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri::Manager;
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let _guard = RECENT_LOCK.lock().map_err(|e| e.to_string())?;
+    edit_recent(&dir, |items| items.clear()).map_err(|e| e.to_string())
 }
 
 /// True when `path` names a vault the app already knows -- an open or locked
@@ -1429,6 +1517,21 @@ fn tab_vault_paths(state: &AppState) -> Vec<String> {
         known.extend(settings.active_vault.iter().cloned());
     }
     known
+}
+
+/// Exact (string) match against the tab paths and the recent list. Unlike
+/// `is_known_vault_path` this does NOT fail closed: it gates a read-side
+/// answer, so an unresolvable path must not count as listed.
+fn is_listed_vault_path(app: &tauri::AppHandle, state: &AppState, path: &str) -> bool {
+    use tauri::Manager;
+    if tab_vault_paths(state).iter().any(|p| p == path) {
+        return true;
+    }
+    let Ok(dir) = app.path().app_config_dir() else { return false };
+    std::fs::read_to_string(dir.join("recent.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<RecentFileRaw>>(&raw).ok())
+        .is_some_and(|items| items.iter().any(|r| r.path == path))
 }
 
 /// Canonical comparison of `path` against `known`; an unresolvable `path`
@@ -7271,6 +7374,21 @@ mod tests {
         assert!(
             !msg.contains("permission denied for this file"),
             "the bare variant message is what we are replacing"
+        );
+    }
+
+    #[test]
+    fn vault_file_missing_only_when_nothing_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let present = dir.path().join("here.kokos");
+        std::fs::write(&present, b"x").unwrap();
+        assert!(!super::vault_file_missing(&present));
+        assert!(super::vault_file_missing(&dir.path().join("gone.kokos")));
+        assert!(super::vault_file_missing(&dir.path().join("no-such-dir").join("v.kokos")));
+        std::fs::write(dir.path().join(".evicted.kokos.icloud"), b"").unwrap();
+        assert!(
+            !super::vault_file_missing(&dir.path().join("evicted.kokos")),
+            "an evicted iCloud file is still there, just not downloaded"
         );
     }
 

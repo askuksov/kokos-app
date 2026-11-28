@@ -54,6 +54,11 @@
   font-size: 12px;
   color: var(--text-3);
 }
+.kv-lock-head .kv-lock-path {
+  max-width: 420px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
 
 .kv-lock-form {
   display: flex;

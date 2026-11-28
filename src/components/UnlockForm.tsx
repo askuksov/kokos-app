@@ -19,7 +19,16 @@ import { errorMessage, isUnlockSuperseded } from "../lib/errors";
 // password (+ key file). Shared by the locked tab screen and the extension
 // unlock dialog. Renders a fragment so the lock screen's own layout rules
 // still apply to the buttons.
-export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: () => void }) {
+export function UnlockForm({
+  path,
+  onUnlocked,
+  onMissing,
+}: {
+  path: string;
+  onUnlocked?: () => void;
+  /** The vault file is gone from `path`; without it the error text is shown. */
+  onMissing?: () => void;
+}) {
   const t = useT();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,6 +39,13 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
   const [requiresKeyfile, setRequiresKeyfile] = useState(false);
   const [keyfile, setKeyfile] = useState<string | null>(null);
 
+  // True when the error means the file is gone and the parent took over.
+  function handledMissing(err: unknown): boolean {
+    if (!onMissing || !String(err).includes("vault_not_found")) return false;
+    onMissing();
+    return true;
+  }
+
   useEffect(() => {
     setKeyfile(null);
     let ignore = false;
@@ -39,10 +55,11 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
         setHint(h.hint || null);
         setRequiresKeyfile(h.requires_keyfile);
       })
-      .catch(() => {
+      .catch((err) => {
         if (ignore) return;
         setHint(null);
         setRequiresKeyfile(false);
+        handledMissing(err);
       });
     return () => { ignore = true; };
   }, [path]);
@@ -77,6 +94,7 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
       await keychainUnlock(path);
       await afterOpen();
     } catch (err) {
+      if (handledMissing(err)) return;
       if (!isUnlockSuperseded(err)) setHasSaved(false);
       setError(errorMessage(err, t));
     }
@@ -88,7 +106,9 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
     try {
       await touchidUnlock(path);
       await afterOpen();
-    } catch (err) { setError(errorMessage(err, t)); }
+    } catch (err) {
+      if (!handledMissing(err)) setError(errorMessage(err, t));
+    }
     finally { setBusy(false); }
   }
 
@@ -99,7 +119,7 @@ export function UnlockForm({ path, onUnlocked }: { path: string; onUnlocked?: ()
       await openVault(path, password, keyfile);
       await afterOpen();
     } catch (err) {
-      setError(errorMessage(err, t));
+      if (!handledMissing(err)) setError(errorMessage(err, t));
     } finally { setBusy(false); }
   }
 
