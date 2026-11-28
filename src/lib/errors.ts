@@ -6,6 +6,7 @@ const ERROR_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ["fast_unlock_keyfile_unsupported", "errors.fastUnlockKeyfileUnsupported"],
   ["fast_unlock_store_failed", "errors.fastUnlockStoreFailed"],
   ["unlock_superseded", "errors.unlockSuperseded"],
+  ["vault_not_found", "errors.vaultNotFound"],
 ];
 
 /**

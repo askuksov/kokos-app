@@ -79,6 +79,9 @@ pub fn run() {
             commands::verify_password,
             commands::set_vault_hint,
             commands::recent_files,
+            commands::forget_recent,
+            commands::clear_recents,
+            commands::close_restored_tab,
             commands::pick_vault_path,
             commands::list_entries,
             commands::search_entries,
@@ -217,6 +220,12 @@ pub fn run() {
             {
                 let st = app.state::<state::AppState>();
                 let paths = st.settings.lock().unwrap().open_vaults.clone();
+                // Tabs restored locked must stay unlockable even if their path
+                // was removed from the recent list (which also feeds the
+                // allowlist). `open_vaults` is backend-owned, never WebView input.
+                for p in &paths {
+                    paths::allow(&st.allowed_paths, p);
+                }
                 *st.restored_locked.lock().unwrap() = paths;
             }
 

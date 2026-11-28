@@ -216,6 +216,9 @@ export const permanentDeleteEntry = (id: string, vaultId?: string) => invoke<voi
 export const emptyTrash = (vaultId?: string) => invoke<number>("empty_trash", { vaultId });
 
 export const recentFiles = () => invoke<RecentFile[]>("recent_files");
+export const forgetRecent = (path: string) => invoke<void>("forget_recent", { path });
+export const clearRecents = () => invoke<void>("clear_recents");
+export const closeRestoredTab = (vaultId: string) => invoke<void>("close_restored_tab", { vaultId });
 export const getVaultHeaderInfo = (path: string) => invoke<HeaderInfo>("get_vault_header_info", { path });
 
 export const takePendingOpen = (): Promise<string | null> => invoke("take_pending_open");

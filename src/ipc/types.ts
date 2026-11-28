@@ -205,6 +205,8 @@ export interface RecentFile {
   path: string;
   last_opened: number;
   has_keyfile: boolean;
+  /** The file is gone from this path (deleted, moved, volume not mounted). */
+  missing: boolean;
 }
 
 export interface RestoreFile {

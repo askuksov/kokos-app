@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { switchVault, lockVault, lockAll, closeVault, getSettings, recentFiles, reorderVaults } from "../ipc/commands";
+import { switchVault, lockVault, lockAll, closeVault, closeRestoredTab, getSettings, recentFiles, reorderVaults } from "../ipc/commands";
 import { VAULT_LOCKED, VAULT_UNLOCKED, MENU_NEW_VAULT, MENU_OPEN_VAULT, MENU_CLOSE_VAULT, MENU_LOCK_ALL, TRAY_FOCUS_VAULT, TRAY_OPEN_SETTINGS } from "../lib/events";
 import { requestTraySettings, clearTraySettingsRequest } from "../lib/traySettings";
 import { vaultDisplayName } from "../lib/format";
@@ -143,6 +143,10 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.error("close_vault failed:", e);
       }
+    } else if (tab) {
+      // Restored locked at launch and never unlocked: the backend only knows
+      // it from the persisted tab list, so drop it there too.
+      await closeRestoredTab(vaultId).catch((e) => console.error("close_restored_tab failed:", e));
     }
     const cur = tabsRef.current;
     const idx = cur.findIndex((t) => t.vaultId === vaultId);
